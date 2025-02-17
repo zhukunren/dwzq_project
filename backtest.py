@@ -1,4 +1,3 @@
-from WindPy import w
 import numpy as np
 from function import *
 import plotly.graph_objects as go
