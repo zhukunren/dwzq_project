@@ -16,9 +16,6 @@ from models import set_seed
 from preprocess import read_day_fromtdx, select_time, preprocess_data
 from train import train_model
 from predict import predict_new_data
-
-from backtest import backtest_results
-from predict import get_trade_signal
 from plotly.subplots import make_subplots
 import plotly.graph_objs as go
 # 设置随机种子
