@@ -115,7 +115,7 @@ def plot_candlestick(data, stock_code, start_date, end_date, peaks=None, troughs
                     value = f"{value:.2f}"
                 annotations.append(dict(
                     xref='paper', yref='paper',
-                    x=1.05, y=y_pos,
+                    x=0.05, y=1-y_pos,
                     text=f"{key}: {value}",
                     showarrow=False,
                     align='left'
@@ -418,7 +418,7 @@ def main():
                             ('累计收益率', final_bt.get('"波段盈"累计收益率', 0)),
                             ('超额收益率', final_bt.get('超额收益率', 0)),
                             ('胜率', final_bt.get('胜率', 0)),
-                            ('最大回撤', final_bt.get('最大回撤', 0))
+                            ('交易笔数', final_bt.get('交易笔数', 0))
                         ]
                         for col, (name, value) in zip(cols, metrics):
                             col.metric(name, f"{value*100:.2f}%" if isinstance(value, float) else value)
