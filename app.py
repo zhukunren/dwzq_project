@@ -5,6 +5,7 @@ import numpy as np
 import plotly.graph_objs as go
 from plotly.subplots import make_subplots
 import tushare as ts
+from itertools import product
 
 from models import set_seed
 from preprocess import preprocess_data
@@ -215,8 +216,10 @@ def read_day_from_tushare(symbol_code, symbol_type='stock'):
     except Exception as e:
         print(f"通过 Tushare 获取数据失败：{e}")
         return pd.DataFrame()
-def main():
-    st.set_page_config(page_title="东吴财富管理AI超额收益系统", layout="wide")
+
+#不进行配对
+def main1():
+    st.set_page_config(page_title="指数局部高低点预测", layout="wide")
     st.title("东吴财富管理AI超额收益系统")
 
     with st.sidebar:
@@ -234,7 +237,7 @@ def main():
             classifier_name = "MLP"
         mixture_depth = st.slider("因子混合深度", 1, 3, 1)
         oversample_method = st.selectbox("类别不均衡处理", 
-            ["过采样", "类别权重"])
+            ["过采样", "类别权重",'ADASYN', 'Borderline-SMOTE', 'SMOTEENN', 'SMOTETomek'])
         if oversample_method == "过采样":
             oversample_method = "SMOTE"
         if oversample_method == '类别权重':
@@ -352,7 +355,7 @@ def main():
                                     mixture_depth, 
                                     n_features_selected if not auto_feature else 'auto',
                                     oversample_method,
-                                    window_size=10
+                                    window_size=30
                                 )
                                 
                                 # 在预测集上回测
@@ -361,7 +364,7 @@ def main():
                                     peak_model, peak_scaler, peak_selector, all_features_peak, peak_threshold,
                                     trough_model, trough_scaler, trough_selector, all_features_trough, trough_threshold,
                                     N, mixture_depth,
-                                    window_size=10,  
+                                    window_size=30,  
                                     eval_mode=True   
                                 )
                                 
@@ -404,7 +407,242 @@ def main():
                             best_models['all_features_trough'],
                             best_models['trough_threshold'],
                             N, mixture_depth,
-                            window_size=10,
+                            window_size=30,
+                            eval_mode=False
+                        )
+                        
+                        # 显示结果
+                        st.success(f"预测完成！最佳模型超额收益率: {best_excess*100:.2f}%")
+                        
+                        # 显示回测结果
+                        st.subheader("回测结果")
+                        cols = st.columns(4)
+                        metrics = [
+                            ('累计收益率', final_bt.get('"波段盈"累计收益率', 0)),
+                            ('超额收益率', final_bt.get('超额收益率', 0)),
+                            ('胜率', final_bt.get('胜率', 0)),
+                            ('交易笔数', final_bt.get('交易笔数', 0))
+                        ]
+                        for col, (name, value) in zip(cols, metrics):
+                            col.metric(name, f"{value*100:.2f}%" if isinstance(value, float) else value)
+                        
+                        # 显示图表
+                        peaks_pred = final_result[final_result['Peak_Prediction'] == 1]
+                        troughs_pred = final_result[final_result['Trough_Prediction'] == 1]
+                        fig = plot_candlestick(final_result, symbol_code, 
+                                            pred_start.strftime("%Y%m%d"), pred_end.strftime("%Y%m%d"),
+                                            peaks_pred, troughs_pred, True, 
+                                            [classifier_name], final_bt)
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # 显示预测结果表格
+                        st.subheader("预测明细")
+                        st.dataframe(final_result[['TradeDate', 'Peak_Prediction', 'Peak_Probability',
+                                                'Trough_Prediction', 'Trough_Probability']])
+                        
+                        progress_bar.empty()
+                        status_text.empty()
+
+                    except Exception as e:
+                        st.error(f"预测失败: {str(e)}")
+
+
+def main():
+    st.set_page_config(page_title="指数局部高低点预测", layout="wide")
+    st.title("东吴财富管理AI超额收益系统")
+
+    with st.sidebar:
+        st.header("参数设置")
+        
+        # 数据设置
+        data_source = st.selectbox("选择数据来源", ["股票", "指数"])
+        symbol_code = st.text_input(f"{data_source}代码", "000001.SZ")
+        N = st.number_input("窗口长度 N", min_value=5, max_value=100, value=30)
+        
+        # 模型设置
+        classifier_name = st.selectbox("选择模型", ["Transformer", "深度学习"], index=1)
+        if classifier_name == "深度学习":
+            classifier_name = "MLP"
+        mixture_depth = st.slider("因子混合深度", 1, 3, 1)
+        oversample_method = st.selectbox("类别不均衡处理", 
+             ["过采样", "类别权重",'ADASYN', 'Borderline-SMOTE', 'SMOTEENN', 'SMOTETomek'])
+        if oversample_method == "过采样":
+            oversample_method = "SMOTE"
+        if oversample_method == '类别权重':
+            oversample_method ="Class Weights"
+        
+        # 特征选择
+        auto_feature = st.checkbox("自动特征选择", True)
+        n_features_selected = st.number_input("选择特征数量", 
+            min_value=5, max_value=100, value=20, disabled=auto_feature)
+
+    # 训练和预测选项卡
+    tab1, tab2 = st.tabs(["训练模型", "预测"])
+
+    with tab1:
+        with st.form("train_form"):
+            st.subheader("训练参数")
+            col1, col2 = st.columns(2)
+            with col1:
+                train_start = st.date_input("训练开始日期", datetime(2000,1,1))  # 设置中文日期控件
+            with col2:
+                train_end = st.date_input("训练结束日期", datetime(2020,12,31))  # 设置中文日期控件
+            
+            if st.form_submit_button("开始训练"):
+                try:
+                    # 根据数据来源选择股票或指数
+                    symbol_type = 'index' if data_source == '指数' else 'stock'
+                    data = read_day_from_tushare(symbol_code, symbol_type)
+                    df = select_time(data, train_start.strftime("%Y%m%d"), train_end.strftime("%Y%m%d"))
+                    
+                    with st.spinner("数据预处理中..."):
+                        df_preprocessed, all_features = preprocess_data(df, N, mixture_depth, mark_labels=True)
+                    
+                    with st.spinner("训练模型中..."):
+                        (peak_model, peak_scaler, peak_selector, 
+                        peak_selected_features, all_features_peak, peak_best_score,
+                        peak_metrics, peak_threshold,
+                        trough_model, trough_scaler, trough_selector,
+                        trough_selected_features, all_features_trough,
+                        trough_best_score, trough_metrics, trough_threshold) = train_model(
+                            df_preprocessed, N, all_features, classifier_name,
+                            mixture_depth, n_features_selected if not auto_feature else 'auto', 
+                            oversample_method
+                        )
+                        
+                        st.session_state.models = {
+                            'peak_model': peak_model,
+                            'peak_scaler': peak_scaler,
+                            'peak_selector': peak_selector,
+                            'all_features_peak': all_features_peak,
+                            'peak_threshold': peak_threshold,
+                            'trough_model': trough_model,
+                            'trough_scaler': trough_scaler,
+                            'trough_selector': trough_selector,
+                            'all_features_trough': all_features_trough,
+                            'trough_threshold': trough_threshold,
+                            'N': N,
+                            'mixture_depth': mixture_depth
+                        }
+                        st.session_state.trained = True
+                    
+                    st.success("训练完成！")
+                    peaks = df_preprocessed[df_preprocessed['Peak'] == 1]
+                    troughs = df_preprocessed[df_preprocessed['Trough'] == 1]
+                    fig = plot_candlestick(df_preprocessed, symbol_code, 
+                                         train_start.strftime("%Y%m%d"), train_end.strftime("%Y%m%d"),
+                                         peaks, troughs)
+                    st.plotly_chart(fig, use_container_width=True)
+
+                except Exception as e:
+                    st.error(f"训练失败: {str(e)}")
+
+    with tab2:
+        if not st.session_state.trained:
+            st.warning("请先完成模型训练")
+        else:
+            with st.form("predict_form"):
+                st.subheader("预测参数")
+                col1, col2 = st.columns(2)
+                with col1:
+                    pred_start = st.date_input("预测开始日期")  
+                with col2:
+                    pred_end = st.date_input("预测结束日期") 
+                
+                if st.form_submit_button("开始预测"):
+                    try:
+                        # 根据数据来源选择股票或指数
+                        symbol_type = 'index' if data_source == '指数' else 'stock'
+                        data = read_day_from_tushare(symbol_code, symbol_type)
+                        new_df = select_time(data, pred_start.strftime("%Y%m%d"), pred_end.strftime("%Y%m%d"))
+                        
+                        # 预处理数据
+                        df_preprocessed, all_features = preprocess_data(new_df, N, mixture_depth, mark_labels=True)
+                        
+                        best_excess = -np.inf
+                        best_models = None
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        
+                        # 进行10次模型训练
+                        peak_models = []
+                        trough_models = []
+                        for i in range(10):
+                            status_text.text(f"正在进行第 {i+1}/10 次模型训练...")
+                            progress_bar.progress((i+1)/10)
+                            
+                            try:
+                                # 重新训练模型
+                                (peak_model, peak_scaler, peak_selector, 
+                                _, all_features_peak, _,
+                                _, peak_threshold,
+                                trough_model, trough_scaler, trough_selector,
+                                _, all_features_trough,
+                                _, _, trough_threshold) = train_model(
+                                    df_preprocessed, N, all_features, classifier_name,
+                                    mixture_depth, 
+                                    n_features_selected if not auto_feature else 'auto',
+                                    oversample_method,
+                                    window_size=30
+                                )
+                                
+                                # 保存模型
+                                peak_models.append((peak_model, peak_scaler, peak_selector, all_features_peak, peak_threshold))
+                                trough_models.append((trough_model, trough_scaler, trough_selector, all_features_trough, trough_threshold))
+                                
+                            except Exception as e:
+                                st.error(f"第 {i+1} 次训练失败: {str(e)}")
+                                continue
+                        
+                        # 生成笛卡尔积的100个模型组合
+                        model_combinations = list(product(peak_models, trough_models))
+
+                        # 回测每个组合并选择超额收益率最高的
+                        for peak_model, trough_model in model_combinations:
+                            peak_model_data = peak_model
+                            trough_model_data = trough_model
+
+                            # 执行回测
+                            _, bt_result = predict_new_data(new_df, peak_model_data[0], peak_model_data[1], peak_model_data[2], peak_model_data[3], peak_model_data[4],
+                                                           trough_model_data[0], trough_model_data[1], trough_model_data[2], trough_model_data[3], trough_model_data[4],
+                                                           N, mixture_depth, window_size=30, eval_mode=True)
+
+                            # 比较超额收益率
+                            current_excess = bt_result.get('超额收益率', -np.inf)
+                            if current_excess > best_excess:
+                                best_excess = current_excess
+                                best_models = {
+                                    'peak_model': peak_model_data[0],
+                                    'peak_scaler': peak_model_data[1],
+                                    'peak_selector': peak_model_data[2],
+                                    'all_features_peak': peak_model_data[3],
+                                    'peak_threshold': peak_model_data[4],
+                                    'trough_model': trough_model_data[0],
+                                    'trough_scaler': trough_model_data[1],
+                                    'trough_selector': trough_model_data[2],
+                                    'all_features_trough': trough_model_data[3],
+                                    'trough_threshold': trough_model_data[4]
+                                }
+
+                        # 使用最佳模型进行最终预测
+                        if best_models is None:
+                            raise ValueError("所有训练尝试均失败")
+                            
+                        status_text.text("使用最佳模型进行最终预测...")
+                        final_result, final_bt = predict_new_data(
+                            new_df,
+                            best_models['peak_model'],
+                            best_models['peak_scaler'],
+                            best_models['peak_selector'],
+                            best_models['all_features_peak'],
+                            best_models['peak_threshold'],
+                            best_models['trough_model'],
+                            best_models['trough_scaler'],
+                            best_models['trough_selector'],
+                            best_models['all_features_trough'],
+                            best_models['trough_threshold'],
+                            N, mixture_depth,
+                            window_size=30,
                             eval_mode=False
                         )
                         
