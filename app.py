@@ -216,7 +216,7 @@ def read_day_from_tushare(symbol_code, symbol_type='stock'):
         print(f"通过 Tushare 获取数据失败：{e}")
         return pd.DataFrame()
 def main():
-    st.set_page_config(page_title="指数局部高低点预测", layout="wide")
+    st.set_page_config(page_title="东吴财富管理AI超额收益系统", layout="wide")
     st.title("东吴财富管理AI超额收益系统")
 
     with st.sidebar:
