@@ -217,7 +217,7 @@ def read_day_from_tushare(symbol_code, symbol_type='stock'):
         return pd.DataFrame()
 def main():
     st.set_page_config(page_title="指数局部高低点预测", layout="wide")
-    st.title("指数局部高低点预测系统")
+    st.title("东吴财富管理AI超额收益系统")
 
     with st.sidebar:
         st.header("参数设置")
