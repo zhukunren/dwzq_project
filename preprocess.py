@@ -144,12 +144,14 @@ def preprocess_data(data, N, mixture_depth, mark_labels=True, min_features_to_se
         'Bollinger_Position', 'K_D_Diff', 'ConsecutiveUp', 'ConsecutiveDown',
         'Cross_MA5_Count', 'Volume_Spike_Count','one','Close','Pch','CCI_20'
     ]
+    '''
     base_features.extend([
         'Williams_%R_14', 'OBV', 'VWAP','ZScore_20', 'Plus_DI', 'Minus_DI',
         'ADX_14','Bollinger_Width', 'Slope_MA5', 'Volume_Change', 
         'Price_Mean_Diff','High_Mean_Diff','Low_Mean_Diff','MA_5','MA_20','MA_50',
         'MA_200','EMA_5','EMA_20'
     ])
+    '''
     base_features.extend([
         'MFI_14','CMF_20','TRIX_15','Ultimate_Osc','Chaikin_Osc','PPO',
         'DPO_20','KST','KST_signal','KAMA_10'
