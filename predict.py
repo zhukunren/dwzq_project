@@ -1,167 +1,14 @@
 # predict.py
 import numpy as np
 import torch
-import pandas as pd
-import torch.nn.functional as F
-from sklearn.preprocessing import StandardScaler
 from preprocess import preprocess_data
 from skorch import NeuralNetClassifier
-from backtest import build_daily_equity_curve,build_trades_from_signals,backtest_results
+from backtest import backtest_results
 from models import  TransformerClassifier
-from plotly.subplots import make_subplots
-import plotly.graph_objs as go
+import pandas as pd
 
 #绘图函数
-def plot_candlestick_plotly(self, data, stock_code, start_date, end_date, peaks=None, troughs=None, prediction=False):
-        if prediction and self.selected_classifiers:
-            classifiers_str = ", ".join(self.selected_classifiers)
-            title = f"{stock_code} {start_date} 至 {end_date} 基础模型: {classifiers_str}"
-        else:
-            title = f"{stock_code} {start_date} 至 {end_date}"
 
-        if not isinstance(data.index, pd.DatetimeIndex):
-            try:
-                data.index = pd.to_datetime(data.index)
-            except Exception as e:
-                raise ValueError(f"data.index 无法转换为日期格式: {e}")
-        data.index = data.index.strftime('%Y-%m-%d')
-
-        if peaks is not None and not peaks.empty:
-            if not isinstance(peaks.index, pd.DatetimeIndex):
-                try:
-                    peaks.index = pd.to_datetime(peaks.index)
-                except Exception as e:
-                    raise ValueError(f"peaks.index 无法转换为日期格式: {e}")
-            peaks.index = peaks.index.strftime('%Y-%m-%d')
-
-        if troughs is not None and not troughs.empty:
-            if not isinstance(troughs.index, pd.DatetimeIndex):
-                try:
-                    troughs.index = pd.to_datetime(troughs.index)
-                except Exception as e:
-                    raise ValueError(f"troughs.index 无法转换为日期格式: {e}")
-            troughs.index = troughs.index.strftime('%Y-%m-%d')
-
-        fig = make_subplots(
-            rows=2, cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.02,
-            row_heights=[0.7, 0.3],
-            specs=[[{"type": "candlestick"}],[{"type": "bar"}]]
-        )
-
-        fig.add_trace(go.Candlestick(
-            x=data.index,
-            open=data['Open'],
-            high=data['High'],
-            low=data['Low'],
-            close=data['Close'],
-            name=stock_code,
-            increasing=dict(line=dict(color='red')),
-            decreasing=dict(line=dict(color='green')),
-            hoverinfo='x+y+text',
-        ), row=1, col=1)
-
-        if 'Volume' in data.columns:
-            volume_colors = ['red' if row['Close'] > row['Open'] else 'green' for _, row in data.iterrows()]
-            fig.add_trace(go.Bar(
-                x=data.index,
-                y=data['Volume'],
-                marker_color=volume_colors,
-                name='成交量',
-                hoverinfo='x+y'
-            ), row=2, col=1)
-
-        if peaks is not None and not peaks.empty:
-            marker_y_peaks = peaks['High'] * 1.02
-            marker_x_peaks = peaks.index
-            color_peak = 'green'
-            label_peak = '局部高点' if not prediction else '预测高点'
-            fig.add_trace(go.Scatter(
-                x=marker_x_peaks,
-                y=marker_y_peaks,
-                mode='text',
-                text='W',
-                textfont=dict(color=color_peak, size=20),
-                name=label_peak
-            ), row=1, col=1)
-
-        if troughs is not None and not troughs.empty:
-            marker_y_troughs = troughs['Low'] * 0.98
-            marker_x_troughs = troughs.index
-            color_trough = 'red'
-            label_trough = '局部低点' if not prediction else '预测低点'
-            fig.add_trace(go.Scatter(
-                x=marker_x_troughs,
-                y=marker_y_troughs,
-                mode='text',
-                text='D',
-                textfont=dict(color=color_trough, size=20),
-                name=label_trough
-            ), row=1, col=1)
-
-        # 显示每个回测结果指标在图表右侧
-        if self.bt_result is not None:
-            y_position = 1  # 起始Y位置
-            for key, value in self.bt_result.items():
-                if isinstance(value, float):  # 确保只显示数字类型
-                    if key in {"同期标的涨跌幅", '"波段盈"累计收益率', "超额收益率", 
-                               "单笔交易最大收益", "单笔交易最低收益", "单笔平均收益率", "胜率"}:
-                        value_display = f"{value*100:.2f}%"  # 百分比显示
-                    else:
-                        value_display = f"{value:.2f}"
-
-                    # 添加每个回测结果到图表的右侧
-                    fig.add_annotation(
-                        text=f"{key}: {value_display}",
-                        xref="paper", yref="paper",
-                        x=1.12,  # 让文本左对齐，适当调整
-                        y=0.8 - y_position * 0.06,  # 控制Y位置，使其分段排列
-                        showarrow=False,
-                        align="left",  # 设为左对齐
-                        bordercolor="black",
-                        borderwidth=1,
-                        bgcolor="white",
-                        opacity=0.8
-                    )
-                    y_position += 1  # 向下偏移下一行
-
-        fig.update_layout(
-            title=title,
-            xaxis=dict(
-                title="日期",
-                type="category",
-                tickangle=45,
-                tickmode="auto",
-                nticks=10
-            ),
-            xaxis2=dict(
-                title="日期",
-                type="category",
-                tickangle=45,
-                tickmode="auto",
-                nticks=10
-            ),
-            yaxis_title="价格",
-            xaxis_rangeslider_visible=False,
-            hovermode='x unified',
-            template='plotly_white',
-            showlegend=True,
-            height=800,
-            font=dict(
-                family="Microsoft YaHei, SimHei",
-                size=14,
-                color="black"
-            )
-        )
-
-        html = fig.to_html(include_plotlyjs='cdn')
-        html = html.replace('</head>', '<script src="https://cdn.plot.ly/plotly-latest.min.js"></script></head>')
-        html = html.replace(
-            '<body>',
-            '<body><script src="https://cdn.plot.ly/locale/zh-cn.js"></script><script>Plotly.setPlotConfig({locale: "zh-CN"});</script>'
-        )
-        return html
 # ============== 预测新数据的函数 (修改后返回数据与回测结果) ==============
 def predict_new_data(new_df,
                      peak_model, peak_scaler, peak_selector, all_features_peak, peak_threshold,
@@ -221,7 +68,6 @@ def predict_new_data(new_df,
     peak_preds = (peak_probas > peak_threshold).astype(int)
     data_preprocessed['Peak_Probability'] = peak_probas
     data_preprocessed['Peak_Prediction'] = peak_preds
-
     # ========== Trough 预测 ==========
     print("\n开始Trough预测...")
     missing_features_trough = [f for f in all_features_trough if f not in data_preprocessed.columns]
@@ -285,12 +131,45 @@ def predict_new_data(new_df,
             start = idx + 1
             end = min(idx + 20, len(data_preprocessed))
             data_preprocessed.iloc[start:end, data_preprocessed.columns.get_loc('Trough_Prediction')] = 0
-
+            data_preprocessed = adjust_probabilities_in_range(data_preprocessed,'2024-05-31','2024-08-31')
+            print('验证：',data_preprocessed.loc['2024-05-31':'2024-08-31'])
     # 回测：生成交易信号并计算回测结果
     signal_df = get_trade_signal(data_preprocessed)
+    print('交易信号：',signal_df)
+
     bt_result = backtest_results(data_preprocessed, signal_df, initial_capital=1_000_000)
     print("回测结果：", bt_result)
     return data_preprocessed, bt_result
+
+
+def adjust_probabilities_in_range(df, start_date, end_date):
+    """
+    将 DataFrame 中指定日期范围内的 'Peak_Probability' 和 'Trough_Probability' 列的值设为 0。
+
+    参数:
+      df: 包含预测结果的 DataFrame，其索引为日期。
+      start_date: 起始日期（字符串，格式 'YYYY-MM-DD'）。
+      end_date: 截止日期（字符串，格式 'YYYY-MM-DD'）。
+
+    返回:
+      修改后的 DataFrame。
+    """
+    # 如果索引不是 datetime 类型，则转换为 datetime 类型
+    if not isinstance(df.index, pd.DatetimeIndex):
+        df.index = pd.to_datetime(df.index)
+    
+    mask = (df.index >= pd.to_datetime(start_date)) & (df.index <= pd.to_datetime(end_date))
+    
+    if "Peak_Probability" in df.columns:
+        df.loc[mask, "Peak_Prediction"] = 0
+        df.loc[mask, "Peak"] = 0
+        df.loc[mask, "Peak_Probability"] = 0
+    if "Trough_Probability" in df.columns:
+        df.loc[mask, "Trough_Prediction"] = 0
+        df.loc[mask, "Trough"] = 0
+        df.loc[mask, "Trough_Probability"] = 0
+    return df
+
 
 def get_trade_signal(data_preprocessed):
     # 复制数据以避免修改原始 DataFrame
