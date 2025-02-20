@@ -300,7 +300,7 @@ def main_product10():
                         st.session_state.trained = True
                     
                     st.success("训练完成！")
-                    df_preprocessed = adjust_probabilities_in_range(df_preprocessed,'2024-05-31','2024-07-31')
+                    df_preprocessed = adjust_probabilities_in_range(df_preprocessed,'2024-05-31','2024-08-31')
                     peaks = df_preprocessed[df_preprocessed['Peak'] == 1]
                     troughs = df_preprocessed[df_preprocessed['Trough'] == 1]
                     fig = plot_candlestick(df_preprocessed, symbol_code, 
@@ -337,9 +337,9 @@ def main_product10():
                         status_text = st.empty()
                         
                         # 进行10次模型训练
-                        for i in range(1):
-                            status_text.text(f"正在进行模型评估...")
-                            progress_bar.progress((i+1)/1)
+                        for i in range(10):
+                            status_text.text(f"正在进行第 {i+1}/10 轮模型评估...")
+                            progress_bar.progress((i+1)/10)
                             
                             try:
                                 (peak_model, peak_scaler, peak_selector, 
