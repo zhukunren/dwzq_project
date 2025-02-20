@@ -337,9 +337,9 @@ def main_product10():
                         status_text = st.empty()
                         
                         # 进行10次模型训练
-                        for i in range(10):
-                            status_text.text(f"正在进行第 {i+1}/10 轮模型评估...")
-                            progress_bar.progress((i+1)/10)
+                        for i in range(1):
+                            status_text.text(f"正在进行模型评估...")
+                            progress_bar.progress((i+1)/1)
                             
                             try:
                                 (peak_model, peak_scaler, peak_selector, 
