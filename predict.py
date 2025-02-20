@@ -131,8 +131,8 @@ def predict_new_data(new_df,
             start = idx + 1
             end = min(idx + 20, len(data_preprocessed))
             data_preprocessed.iloc[start:end, data_preprocessed.columns.get_loc('Trough_Prediction')] = 0
-            data_preprocessed = adjust_probabilities_in_range(data_preprocessed,'2024-05-31','2024-08-31')
-            print('验证：',data_preprocessed.loc['2024-05-31':'2024-08-31'])
+            data_preprocessed = adjust_probabilities_in_range(data_preprocessed,'2024-05-31','2024-07-31')
+            print('验证：',data_preprocessed.loc['2024-05-31':'2024-07-31'])
     # 回测：生成交易信号并计算回测结果
     signal_df = get_trade_signal(data_preprocessed)
     print('交易信号：',signal_df)
