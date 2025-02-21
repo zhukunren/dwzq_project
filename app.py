@@ -338,7 +338,7 @@ def main_product10():
                         
                         # 进行10次模型训练
                         for i in range(10):
-                            status_text.text(f"正在进行第 {i+1}/10 轮模型评估...")
+                            status_text.text(f"正在进行第 {i+1}/10 轮模型计算...")
                             progress_bar.progress((i+1)/10)
                             
                             try:
