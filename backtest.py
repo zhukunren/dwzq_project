@@ -3,6 +3,7 @@ import numpy as np
 from function import *
 import pandas as pd
 
+'''
 def build_trades_from_signals(df, signal_df):
 
     # 修改列名转换方式：先复制，再修改列名
@@ -33,6 +34,7 @@ def build_trades_from_signals(df, signal_df):
 
         if not holding:
             if direction_signal == 'buy':
+
                 # 下一交易日开盘买入
                 holding = True
                 entry_date = next_day
@@ -75,6 +77,262 @@ def build_trades_from_signals(df, signal_df):
 
     #print(pd.DataFrame(trades))
     return pd.DataFrame(trades)
+'''
+'''
+def build_trades_from_signals(df, signal_df):
+    df = df.copy()
+    df.columns = df.columns.astype(str).str.lower()
+
+    signal_df = signal_df.copy()
+    signal_df.columns = signal_df.columns.astype(str).str.lower()
+
+    if not isinstance(df.index, pd.DatetimeIndex):
+        df.index = pd.to_datetime(df.index)
+
+    if not isinstance(signal_df.index, pd.DatetimeIndex):
+        signal_df.index = pd.to_datetime(signal_df.index)
+
+    signal_df = signal_df.reindex(df.index).fillna('')
+
+    trades = []
+    holding = False
+    entry_date = None
+    entry_price = None
+    exit_date = None
+    exit_price = None
+    signal_buy_low = None
+    signal_sell_high = None
+    holding_days = 0
+    dates = df.index.to_list()
+
+    for i in range(len(dates) - 1):
+        today = dates[i]
+        next_day = dates[i + 1]
+        direction_signal = signal_df.loc[today, 'direction'] if 'direction' in signal_df.columns else ''
+        
+        if not holding:
+            try:
+                # 确保只有在没有持仓时才能执行买入
+                if direction_signal == 'buy':
+                    holding = True
+                    entry_date = next_day
+                    entry_price = df.loc[next_day, 'open']
+                    holding_days = 0
+                    signal_buy_low = df.loc[today, 'low']
+            except Exception as e:
+                print("处理buy信号报错：", e)
+              
+            #卖出4天后如果出现新高再买回
+            try:
+                if len(trades) > 0 and exit_date is not None:  # 修正语法错误
+                    days_since_exit = (df.index.get_loc(today) - df.index.get_loc(exit_date))  # 使用today计算天数
+                    if days_since_exit >= 4 and df.loc[today, 'close'] / signal_sell_high>1:  # 使用today的收盘价
+                        holding = True
+                        entry_date = next_day
+                        entry_price = df.loc[next_day, 'open']
+                        holding_days = 0
+                        signal_buy_low = df.loc[today, 'low']  # 记录当前收盘价为买入信号收盘价
+            except Exception as e:
+                print("处理卖出后再买入报错：", e)
+
+        else:
+            holding_days += 1
+            try:
+                # 卖出操作，仅当持仓并且满足卖出条件时才卖出
+                if direction_signal == 'sell':
+                    holding = False
+                    exit_date = next_day
+                    exit_price = df.loc[exit_date, 'open']
+                    trade_return = exit_price / entry_price - 1 if entry_price else None
+                    hold_days = (df.index.get_loc(exit_date) - df.index.get_loc(entry_date))
+                    signal_sell_high = df.loc[today, 'high']
+                    trades.append({
+                        'entry_date': entry_date,
+                        'entry_price': entry_price,
+                        'exit_date': exit_date,
+                        'exit_price': exit_price,
+                        'hold_days': hold_days,
+                        'return': trade_return,
+                        'date': df.index.get_loc(today),
+                        'signal_buy_low': signal_buy_low,
+                        'signal_sell_high': signal_sell_high,
+                    })
+                    # 卖出后重置状态
+                    entry_date = None
+                    entry_price = None
+                    holding_days = 0
+                # 如果持仓天数超过4天且收盘价低于买入信号的收盘价，自动卖出
+                elif holding_days >= 4 and df.loc[today, 'close'] / signal_buy_low<1:  # 使用today的收盘价
+                    holding = False
+                    exit_date = next_day
+                    exit_price = df.loc[exit_date, 'open']
+                    signal_sell_high = df.loc[today, 'high']
+                    trade_return = exit_price / entry_price - 1 if entry_price else None
+                    hold_days = (df.index.get_loc(exit_date) - df.index.get_loc(entry_date))
+                    trades.append({
+                        'entry_date': entry_date,
+                        'entry_price': entry_price,
+                        'exit_date': exit_date,
+                        'exit_price': exit_price,
+                        'hold_days': hold_days,
+                        'return': trade_return,
+                        'date': df.index.get_loc(today),
+                        'signal_buy_low': signal_buy_low,
+                        'signal_sell_high': signal_sell_high,
+                    })
+                    entry_date = None
+                    entry_price = None
+            except Exception as e:
+                print("处理持仓逻辑错误：", e)
+    
+    try:
+        if holding:
+            exit_date = dates[-1]
+            exit_price = df.loc[exit_date, 'close']
+            trade_return = exit_price / entry_price - 1 if entry_price else None
+            hold_days = (df.index.get_loc(exit_date) - df.index.get_loc(entry_date))
+            trades.append({
+                'entry_date': entry_date,
+                'entry_price': entry_price,
+                'exit_date': exit_date,
+                'exit_price': exit_price,
+                'hold_days': hold_days,
+                'return': trade_return,
+                'signal_buy_low': signal_buy_low,
+                'signal_sell_high': signal_sell_high,
+            })
+    except Exception as e:
+        print("处理最后持仓错误：", e)
+
+    print(pd.DataFrame(trades))
+    return pd.DataFrame(trades)
+
+'''
+
+def build_trades_from_signals(df, signal_df):
+    # 修改列名转换方式：先复制，再修改列名
+    df = df.copy()
+    df.columns = df.columns.astype(str).str.lower()
+
+    signal_df = signal_df.copy()
+    signal_df.columns = signal_df.columns.astype(str).str.lower()
+
+    if not isinstance(df.index, pd.DatetimeIndex):
+        df.index = pd.to_datetime(df.index)
+
+    if not isinstance(signal_df.index, pd.DatetimeIndex):
+        signal_df.index = pd.to_datetime(signal_df.index)
+
+    signal_df = signal_df.reindex(df.index).fillna('')
+
+    trades = []
+    holding = False
+    entry_date = None
+    entry_price = None
+    exit_date = None
+    exit_price = None
+    signal_buy_close = None  # 出现买入信号时的收盘价
+    signal_sell_close = None  # 出现卖出信号时的收盘价
+    holding_days = 0  # 持仓天数
+    dates = df.index.to_list()
+
+    for i in range(len(dates) - 1):
+        today = dates[i]
+        next_day = dates[i + 1]
+        direction_signal = signal_df.loc[today, 'direction'] if 'direction' in signal_df.columns else ''
+
+        if not holding:
+            # 只在空仓时才可以买入
+            if direction_signal == 'buy':
+                # 下一交易日开盘买入
+                holding = True
+                entry_date = next_day
+                entry_price = df.loc[next_day, 'open']
+                holding_days = 0  # 重置持仓天数
+                signal_buy_close = df.loc[today, 'close']
+                print(f"买入：{entry_date.strftime('%Y-%m-%d')}，买入价格：{entry_price}")
+
+        else:
+            holding_days += 1
+            # 只在持仓时才可以卖出
+            if direction_signal == 'sell':
+                # 下一交易日开盘卖出
+                holding = False
+                exit_date = next_day
+                exit_price = df.loc[exit_date, 'open']
+                trade_return = exit_price / entry_price - 1 if entry_price else None
+                hold_days = (df.index.get_loc(exit_date) - df.index.get_loc(entry_date))
+                signal_sell_close = df.loc[today, 'close']
+                trades.append({
+                    'entry_date': entry_date,
+                    'entry_price': entry_price,
+                    'exit_date': exit_date,
+                    'exit_price': exit_price,
+                    'hold_days': hold_days,
+                    'return': trade_return,
+                    'date': df.index.get_loc(today),
+                    'signal_buy_close': signal_buy_close,
+                    'signal_sell_close': signal_sell_close,
+                })
+                print(f"卖出：{exit_date.strftime('%Y-%m-%d')}，卖出价格：{exit_price}")
+                entry_date = None
+                entry_price = None
+                holding_days = 0  # 重置持仓天数
+
+            elif holding_days >= 8 and df.loc[next_day, 'close'] < signal_buy_close:
+                # 持仓超过8天且低于买入点，第二天卖出
+                holding = False
+                exit_date = next_day
+                exit_price = df.loc[exit_date, 'open']
+                trade_return = exit_price / entry_price - 1 if entry_price else None
+                hold_days = (df.index.get_loc(exit_date) - df.index.get_loc(entry_date))
+                trades.append({
+                    'entry_date': entry_date,
+                    'entry_price': entry_price,
+                    'exit_date': exit_date,
+                    'exit_price': exit_price,
+                    'hold_days': hold_days,
+                    'return': trade_return,
+                    'date': df.index.get_loc(today),
+                    'signal_buy_close': signal_buy_close,
+                    'signal_sell_close': signal_sell_close,
+                })
+                print(f"买入后亏损，卖出！ 交易日期：{next_day.strftime('%Y-%m-%d')}")
+                entry_date = None
+                entry_price = None
+
+            # 卖出后超过8天且收盘价高于卖出价，第二天买入
+            if not holding and trades and trades[-1]['exit_date'] is not None:
+                days_since_exit = (df.index.get_loc(next_day) - df.index.get_loc(exit_date))
+                if days_since_exit >= 8 and df.loc[next_day, 'close'] > exit_price:
+                    print("上次卖出日期：", exit_date)
+                    holding = True
+                    entry_date = next_day
+                    entry_price = df.loc[entry_date, 'open']
+                    holding_days = 0
+                    print(f"卖出后超过 8 天，收盘价高于卖出价，买入！ 交易日期：{next_day.strftime('%Y-%m-%d')}")
+
+    # 在for循环结束后，检查是否还在持仓
+    if holding:
+        holding = False
+        exit_date = dates[-1]  # 最后一天
+        exit_price = df.loc[exit_date, 'close']  # 或者 open, 或者您想要的价格
+        trade_return = exit_price / entry_price - 1 if entry_price else None
+        hold_days = (df.index.get_loc(exit_date) - df.index.get_loc(entry_date))
+        trades.append({
+            'entry_date': entry_date,
+            'entry_price': entry_price,
+            'exit_date': exit_date,
+            'exit_price': exit_price,
+            'hold_days': hold_days,
+            'return': trade_return
+        })
+        print(f"最后平仓：{exit_date.strftime('%Y-%m-%d')}，平仓价格：{exit_price}")
+        entry_date = None
+        entry_price = None
+    print(pd.DataFrame(trades))
+    return pd.DataFrame(trades)
+
 
 
 def build_daily_equity_curve(df, trades_df, initial_capital=1_000_000):
@@ -233,4 +491,4 @@ def backtest_results(df, signal_df, initial_capital=1_000_000):
         '胜率': win_rate
     }
 
-    return result
+    return result,trades_df
