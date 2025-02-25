@@ -78,7 +78,7 @@ def build_trades_from_signals(df, signal_df):
     #print(pd.DataFrame(trades))
     return pd.DataFrame(trades)
 '''
-'''
+
 def build_trades_from_signals(df, signal_df):
     df = df.copy()
     df.columns = df.columns.astype(str).str.lower()
@@ -122,11 +122,11 @@ def build_trades_from_signals(df, signal_df):
             except Exception as e:
                 print("处理buy信号报错：", e)
               
-            #卖出4天后如果出现新高再买回
+            #卖出8天后如果出现新高再买回
             try:
                 if len(trades) > 0 and exit_date is not None:  # 修正语法错误
                     days_since_exit = (df.index.get_loc(today) - df.index.get_loc(exit_date))  # 使用today计算天数
-                    if days_since_exit >= 4 and df.loc[today, 'close'] / signal_sell_high>1:  # 使用today的收盘价
+                    if days_since_exit >= 8 and df.loc[today, 'close'] / signal_sell_high>1:  # 使用today的收盘价
                         holding = True
                         entry_date = next_day
                         entry_price = df.loc[next_day, 'open']
@@ -161,8 +161,8 @@ def build_trades_from_signals(df, signal_df):
                     entry_date = None
                     entry_price = None
                     holding_days = 0
-                # 如果持仓天数超过4天且收盘价低于买入信号的收盘价，自动卖出
-                elif holding_days >= 4 and df.loc[today, 'close'] / signal_buy_low<1:  # 使用today的收盘价
+                # 如果持仓天数超过8天且收盘价低于买入信号的收盘价，自动卖出
+                elif holding_days >= 8 and df.loc[today, 'close'] / signal_buy_low<1:  # 使用today的收盘价
                     holding = False
                     exit_date = next_day
                     exit_price = df.loc[exit_date, 'open']
@@ -206,8 +206,8 @@ def build_trades_from_signals(df, signal_df):
 
     print(pd.DataFrame(trades))
     return pd.DataFrame(trades)
-
 '''
+
 
 def build_trades_from_signals(df, signal_df):
     # 修改列名转换方式：先复制，再修改列名
@@ -332,8 +332,7 @@ def build_trades_from_signals(df, signal_df):
         entry_price = None
     print(pd.DataFrame(trades))
     return pd.DataFrame(trades)
-
-
+'''
 
 def build_daily_equity_curve(df, trades_df, initial_capital=1_000_000):
     # 正确复制 DataFrame 并转换列名小写
