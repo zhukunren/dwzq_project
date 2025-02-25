@@ -10,136 +10,255 @@ import pandas as pd
 #绘图函数
 
 # ============== 预测新数据的函数 (修改后返回数据与回测结果) ==============
+def merge_trades(data_preprocessed, trades_df):
+    """
+    合并交易数据并保持原始索引，确保在合并后日期列 'date' 与交易信号一致。
+    """
+    # 保存原始索引
+    original_index = data_preprocessed.index
+
+    # 合并卖出日期，确保 exit_date 对齐到 data_preprocessed['date']
+    data_preprocessed = pd.merge(
+        data_preprocessed, 
+        trades_df[['exit_date']],  # 选择 trades_df 中的 'exit_date'
+        left_on='date',            # 使用 data_preprocessed 中的 'date' 列进行合并
+        right_on='exit_date',      # 使用 trades_df 中的 'exit_date' 列进行合并
+        how='left'                 # 使用左连接，保留 data_preprocessed 中所有行
+    )
+
+    # 设置 trade 为 'sell' 当 exit_date 非空时
+    data_preprocessed['trade'] = np.where(data_preprocessed['exit_date'].notna(), 'sell', data_preprocessed['trade'])
+
+    # 合并 entry_date
+    data_preprocessed = pd.merge(
+        data_preprocessed, 
+        trades_df[['entry_date']],  # 选择 trades_df 中的 'entry_date'
+        left_on='date',                           # 使用 data_preprocessed 中的 'date' 列进行合并
+        right_on='entry_date',                    # 使用 trades_df 中的 'entry_date' 列进行合并
+        how='left'                                # 使用左连接，保留 data_preprocessed 中所有行
+    )
+
+    # 设置 trade 为 'buy' 当 entry_date 非空时
+    data_preprocessed['trade'] = np.where(data_preprocessed['entry_date'].notna(), 'buy', data_preprocessed['trade'])
+
+    # 删除重复日期
+    data_preprocessed = data_preprocessed.drop_duplicates(subset=['date'])
+    print(data_preprocessed['trade'])
+    
+    # 恢复原始索引
+    data_preprocessed.index = original_index
+    print(data_preprocessed[['TradeDate', 'date', 'trade']].dropna(subset=['trade']))   
+    return data_preprocessed
+
 def predict_new_data(new_df,
                      peak_model, peak_scaler, peak_selector, all_features_peak, peak_threshold,
                      trough_model, trough_scaler, trough_selector, all_features_trough, trough_threshold,
                      N, mixture_depth=3, window_size=10, eval_mode=False):
     print("开始预测新数据...")
-    data_preprocessed, _ = preprocess_data(new_df, N, mixture_depth=mixture_depth, mark_labels=eval_mode)
-    print(f"预处理后数据长度: {len(data_preprocessed)}")
+    try:
+        data_preprocessed, _ = preprocess_data(new_df, N, mixture_depth=mixture_depth, mark_labels=eval_mode)
+        #print(f"预处理后数据长度: {len(data_preprocessed)}")
+        
+        # ========== Peak 预测 ==========
+        print("\n开始Peak预测...")
+        missing_features_peak = [f for f in all_features_peak if f not in data_preprocessed.columns]
+        if missing_features_peak:
+            print(f"填充缺失特征(Peak): {missing_features_peak}")
+            for feature in missing_features_peak:
+                data_preprocessed[feature] = 0
+        X_new_peak = data_preprocessed[all_features_peak].fillna(0)
+        X_new_peak_scaled = peak_scaler.transform(X_new_peak).astype(np.float32)
+        print(f"Peak数据形状: {X_new_peak_scaled.shape}")
+        if isinstance(peak_model, NeuralNetClassifier) and isinstance(peak_model.module_, TransformerClassifier):
+            print("创建Peak序列数据...")
+            X_seq_list = []
+            for i in range(window_size, len(X_new_peak_scaled) + 1):
+                seq_x = X_new_peak_scaled[i - window_size:i]
+                X_seq_list.append(seq_x)
+            X_new_seq_peak = np.array(X_seq_list, dtype=np.float32)
+            print(f"Peak序列数据形状: {X_new_seq_peak.shape}")
+            batch_size = 64
+            predictions = []
+            peak_model.module_.eval()
+            with torch.no_grad():
+                for i in range(0, len(X_new_seq_peak), batch_size):
+                    batch = torch.from_numpy(X_new_seq_peak[i:i+batch_size]).float().to(peak_model.device)
+                    outputs = peak_model.module_(batch)
+                    probs = torch.softmax(outputs, dim=1)[:, 1]
+                    predictions.append(probs.cpu().numpy())
+            all_probas = np.concatenate(predictions)
+            peak_probas = np.zeros(len(data_preprocessed))
+            peak_probas[window_size-1:] = all_probas
+        else:
+            if isinstance(peak_model, NeuralNetClassifier):
+                if peak_selector is not None:
+                    X_new_peak_selected = peak_selector.transform(X_new_peak_scaled)
+                    logits = peak_model.predict_proba(X_new_peak_selected)
+                else:
+                    logits = peak_model.predict_proba(X_new_peak_scaled)
+                if logits.ndim == 2:
+                    peak_probas = logits[:, 1]
+                else:
+                    peak_probas = torch.sigmoid(torch.tensor(logits)).numpy()
+            else:
+                if peak_selector is not None:
+                    X_new_peak_selected = peak_selector.transform(X_new_peak_scaled)
+                    peak_probas = peak_model.predict_proba(X_new_peak_selected)[:, 1]
+                else:
+                    peak_probas = peak_model.predict_proba(X_new_peak_scaled)[:, 1]
+        peak_preds = (peak_probas > peak_threshold).astype(int)
+        data_preprocessed['Peak_Probability'] = peak_probas
+        data_preprocessed['Peak_Prediction'] = peak_preds
+        # ========== Trough 预测 ==========
+        print("\n开始Trough预测...")
+        missing_features_trough = [f for f in all_features_trough if f not in data_preprocessed.columns]
+        if missing_features_trough:
+            print(f"填充缺失特征(Trough): {missing_features_trough}")
+            for feature in missing_features_trough:
+                data_preprocessed[feature] = 0
+        X_new_trough = data_preprocessed[all_features_trough].fillna(0)
+        X_new_trough_scaled = trough_scaler.transform(X_new_trough).astype(np.float32)
+        print(f"Trough数据形状: {X_new_trough_scaled.shape}")
+        if isinstance(trough_model, NeuralNetClassifier) and isinstance(trough_model.module_, TransformerClassifier):
+            print("创建Trough序列数据...")
+            X_seq_list = []
+            for i in range(window_size, len(X_new_trough_scaled) + 1):
+                seq_x = X_new_trough_scaled[i - window_size:i]
+                X_seq_list.append(seq_x)
+            X_new_seq_trough = np.array(X_seq_list, dtype=np.float32)
+            print(f"Trough序列数据形状: {X_new_seq_trough.shape}")
+            batch_size = 64
+            predictions = []
+            trough_model.module_.eval()
+            with torch.no_grad():
+                for i in range(0, len(X_new_seq_trough), batch_size):
+                    batch = torch.from_numpy(X_new_seq_trough[i:i+batch_size]).float().to(trough_model.device)
+                    outputs = trough_model.module_(batch)
+                    probs = torch.softmax(outputs, dim=1)[:, 1]
+                    predictions.append(probs.cpu().numpy())
+            all_probas = np.concatenate(predictions)
+            trough_probas = np.zeros(len(data_preprocessed))
+            trough_probas[window_size-1:] = all_probas
+        else:
+            if isinstance(trough_model, NeuralNetClassifier):
+                if trough_selector is not None:
+                    X_new_trough_selected = trough_selector.transform(X_new_trough_scaled)
+                    logits = trough_model.predict_proba(X_new_trough_selected)
+                else:
+                    logits = trough_model.predict_proba(X_new_trough_scaled)
+                if logits.ndim == 2:
+                    trough_probas = logits[:, 1]
+                else:
+                    trough_probas = torch.sigmoid(torch.tensor(logits)).numpy()
+            else:
+                if trough_selector is not None:
+                    X_new_trough_selected = trough_selector.transform(X_new_trough_scaled)
+                    trough_probas = trough_model.predict_proba(X_new_trough_selected)[:, 1]
+                else:
+                    trough_probas = trough_model.predict_proba(X_new_trough_scaled)[:, 1]
+        trough_preds = (trough_probas > trough_threshold).astype(int)
+        data_preprocessed['Trough_Probability'] = trough_probas
+        data_preprocessed['Trough_Prediction'] = trough_preds
+
+        # 后处理：20日内不重复预测（逻辑保持不变）
+        print("\n进行后处理...")
+        data_preprocessed.index = data_preprocessed.index.astype(str)
+        for idx, index in enumerate(data_preprocessed.index):
+            if data_preprocessed.loc[index, 'Peak_Prediction'] == 1:
+                start = idx + 1
+                end = min(idx + 20, len(data_preprocessed))
+                data_preprocessed.iloc[start:end, data_preprocessed.columns.get_loc('Peak_Prediction')] = 0
+            if data_preprocessed.loc[index, 'Trough_Prediction'] == 1:
+                start = idx + 1
+                end = min(idx + 20, len(data_preprocessed))
+                data_preprocessed.iloc[start:end, data_preprocessed.columns.get_loc('Trough_Prediction')] = 0
+                data_preprocessed = change_troug_and_peak(data_preprocessed)
+        # 回测：生成交易信号并计算回测结果
+        signal_df = get_trade_signal(data_preprocessed)
+        #print('交易信号：',signal_df)
+
+        bt_result, trades_df = backtest_results(data_preprocessed, signal_df, initial_capital=1_000_000)
+        print(trades_df)
+        print("合并前索引：",data_preprocessed.index)
+        # 将 'TradeDate' 列转换为 datetime 类型
+        data_preprocessed['date'] = pd.to_datetime(data_preprocessed['TradeDate'], errors='coerce')
+
+        print("合并前data_preprocessed列：", data_preprocessed.columns)
+
+        data_preprocessed['trade'] = None
+        # 合并卖出日期，确保 exit_date 对齐到 data_preprocessed['date']
+        data_preprocessed = pd.merge(
+            data_preprocessed, 
+            trades_df[['exit_date']],  # 选择 trades_df 中的 'exit_date'
+            left_on='date',                        # 使用 data_preprocessed 中的 'date' 列进行合并
+            right_on='exit_date',                  # 使用 trades_df 中的 'exit_date' 列进行合并
+            how='left'                             # 使用左连接，保留 data_preprocessed 中所有行
+        )
+
+        # 设置 trade 为 'sell' 当 exit_date 非空时
+        data_preprocessed['trade'] = np.where(data_preprocessed['exit_date'].notna(), 'sell', data_preprocessed['trade'])
+
+        # 合并 entry_date
+        data_preprocessed = pd.merge(
+            data_preprocessed, 
+            trades_df[['entry_date']],  # 选择 trades_df 中的 'entry_date'
+            left_on='date',                           # 使用 data_preprocessed 中的 'date' 列进行合并
+            right_on='entry_date',                    # 使用 trades_df 中的 'entry_date' 列进行合并
+            how='left'                                # 使用左连接，保留 data_preprocessed 中所有行
+        )
+
+        # 设置 trade 为 'buy' 当 entry_date 非空时
+        data_preprocessed['trade'] = np.where(data_preprocessed['entry_date'].notna(), 'buy', data_preprocessed['trade'])
+        #删除重复日期
+        data_preprocessed = data_preprocessed.drop_duplicates(subset=['date'])
+
+        print("合并后data_preprocessed列：", data_preprocessed.columns)
+        
+        # 输出合并后的结果检查
+        # 打印 'TradeDate', 'date', 'trade' 列中 'trade' 不为空的行
+        print(data_preprocessed[['TradeDate', 'date', 'trade']].dropna(subset=['trade']))
+
+        print("回测结果：", bt_result)
+        data_preprocessed.set_index('date', inplace=True)
+        print("合并后索引：",data_preprocessed.index)
+    except Exception as e:
+        print('predict_new_data函数出错',e)
+    return data_preprocessed, bt_result,trades_df
+
+
+def change_troug_and_peak(df):
     
-    # ========== Peak 预测 ==========
-    print("\n开始Peak预测...")
-    missing_features_peak = [f for f in all_features_peak if f not in data_preprocessed.columns]
-    if missing_features_peak:
-        print(f"填充缺失特征(Peak): {missing_features_peak}")
-        for feature in missing_features_peak:
-            data_preprocessed[feature] = 0
-    X_new_peak = data_preprocessed[all_features_peak].fillna(0)
-    X_new_peak_scaled = peak_scaler.transform(X_new_peak).astype(np.float32)
-    print(f"Peak数据形状: {X_new_peak_scaled.shape}")
-    if isinstance(peak_model, NeuralNetClassifier) and isinstance(peak_model.module_, TransformerClassifier):
-        print("创建Peak序列数据...")
-        X_seq_list = []
-        for i in range(window_size, len(X_new_peak_scaled) + 1):
-            seq_x = X_new_peak_scaled[i - window_size:i]
-            X_seq_list.append(seq_x)
-        X_new_seq_peak = np.array(X_seq_list, dtype=np.float32)
-        print(f"Peak序列数据形状: {X_new_seq_peak.shape}")
-        batch_size = 64
-        predictions = []
-        peak_model.module_.eval()
-        with torch.no_grad():
-            for i in range(0, len(X_new_seq_peak), batch_size):
-                batch = torch.from_numpy(X_new_seq_peak[i:i+batch_size]).float().to(peak_model.device)
-                outputs = peak_model.module_(batch)
-                probs = torch.softmax(outputs, dim=1)[:, 1]
-                predictions.append(probs.cpu().numpy())
-        all_probas = np.concatenate(predictions)
-        peak_probas = np.zeros(len(data_preprocessed))
-        peak_probas[window_size-1:] = all_probas
-    else:
-        if isinstance(peak_model, NeuralNetClassifier):
-            if peak_selector is not None:
-                X_new_peak_selected = peak_selector.transform(X_new_peak_scaled)
-                logits = peak_model.predict_proba(X_new_peak_selected)
-            else:
-                logits = peak_model.predict_proba(X_new_peak_scaled)
-            if logits.ndim == 2:
-                peak_probas = logits[:, 1]
-            else:
-                peak_probas = torch.sigmoid(torch.tensor(logits)).numpy()
-        else:
-            if peak_selector is not None:
-                X_new_peak_selected = peak_selector.transform(X_new_peak_scaled)
-                peak_probas = peak_model.predict_proba(X_new_peak_selected)[:, 1]
-            else:
-                peak_probas = peak_model.predict_proba(X_new_peak_scaled)[:, 1]
-    peak_preds = (peak_probas > peak_threshold).astype(int)
-    data_preprocessed['Peak_Probability'] = peak_probas
-    data_preprocessed['Peak_Prediction'] = peak_preds
-    # ========== Trough 预测 ==========
-    print("\n开始Trough预测...")
-    missing_features_trough = [f for f in all_features_trough if f not in data_preprocessed.columns]
-    if missing_features_trough:
-        print(f"填充缺失特征(Trough): {missing_features_trough}")
-        for feature in missing_features_trough:
-            data_preprocessed[feature] = 0
-    X_new_trough = data_preprocessed[all_features_trough].fillna(0)
-    X_new_trough_scaled = trough_scaler.transform(X_new_trough).astype(np.float32)
-    print(f"Trough数据形状: {X_new_trough_scaled.shape}")
-    if isinstance(trough_model, NeuralNetClassifier) and isinstance(trough_model.module_, TransformerClassifier):
-        print("创建Trough序列数据...")
-        X_seq_list = []
-        for i in range(window_size, len(X_new_trough_scaled) + 1):
-            seq_x = X_new_trough_scaled[i - window_size:i]
-            X_seq_list.append(seq_x)
-        X_new_seq_trough = np.array(X_seq_list, dtype=np.float32)
-        print(f"Trough序列数据形状: {X_new_seq_trough.shape}")
-        batch_size = 64
-        predictions = []
-        trough_model.module_.eval()
-        with torch.no_grad():
-            for i in range(0, len(X_new_seq_trough), batch_size):
-                batch = torch.from_numpy(X_new_seq_trough[i:i+batch_size]).float().to(trough_model.device)
-                outputs = trough_model.module_(batch)
-                probs = torch.softmax(outputs, dim=1)[:, 1]
-                predictions.append(probs.cpu().numpy())
-        all_probas = np.concatenate(predictions)
-        trough_probas = np.zeros(len(data_preprocessed))
-        trough_probas[window_size-1:] = all_probas
-    else:
-        if isinstance(trough_model, NeuralNetClassifier):
-            if trough_selector is not None:
-                X_new_trough_selected = trough_selector.transform(X_new_trough_scaled)
-                logits = trough_model.predict_proba(X_new_trough_selected)
-            else:
-                logits = trough_model.predict_proba(X_new_trough_scaled)
-            if logits.ndim == 2:
-                trough_probas = logits[:, 1]
-            else:
-                trough_probas = torch.sigmoid(torch.tensor(logits)).numpy()
-        else:
-            if trough_selector is not None:
-                X_new_trough_selected = trough_selector.transform(X_new_trough_scaled)
-                trough_probas = trough_model.predict_proba(X_new_trough_selected)[:, 1]
-            else:
-                trough_probas = trough_model.predict_proba(X_new_trough_scaled)[:, 1]
-    trough_preds = (trough_probas > trough_threshold).astype(int)
-    data_preprocessed['Trough_Probability'] = trough_probas
-    data_preprocessed['Trough_Prediction'] = trough_preds
+    def update_peak_or_trough(df, prediction_col, opposite_col, condition):
+        for i, date in enumerate(df.index):
+            #print(f"处理日期 {date}: {prediction_col}={df.loc[date, prediction_col]}, {opposite_col}={df.loc[date, opposite_col]}, Close={df.loc[date, 'Close']}, Open={df.loc[date, 'Open']}")
+            
+            # 只处理1的预测值
+            if df.loc[date, prediction_col] == 1:
+                # 判断收盘价是否符合条件
+                if condition(df, i, date):
+                    df.loc[date, prediction_col] = 1  # 保持当前预测
+                else:
+                    df.loc[date, prediction_col] = 0  # 移除预测
+                    # 寻找下一个符合条件的值
+                    for j in range(i + 1, len(df)):
+                        next_date = df.index[j]
+                        if condition(df, j, next_date):
+                            df.loc[next_date, prediction_col] = 1
+                            break
+        return df
 
-    # 后处理：20日内不重复预测（逻辑保持不变）
-    print("\n进行后处理...")
-    data_preprocessed.index = data_preprocessed.index.astype(str)
-    for idx, index in enumerate(data_preprocessed.index):
-        if data_preprocessed.loc[index, 'Peak_Prediction'] == 1:
-            start = idx + 1
-            end = min(idx + 20, len(data_preprocessed))
-            data_preprocessed.iloc[start:end, data_preprocessed.columns.get_loc('Peak_Prediction')] = 0
-        if data_preprocessed.loc[index, 'Trough_Prediction'] == 1:
-            start = idx + 1
-            end = min(idx + 20, len(data_preprocessed))
-            data_preprocessed.iloc[start:end, data_preprocessed.columns.get_loc('Trough_Prediction')] = 0
-            data_preprocessed = adjust_probabilities_in_range(data_preprocessed,'2024-05-31','2024-07-31')
-            print('验证：',data_preprocessed.loc['2024-05-31':'2024-07-31'])
-    # 回测：生成交易信号并计算回测结果
-    signal_df = get_trade_signal(data_preprocessed)
-    print('交易信号：',signal_df)
+    # 高点处理：仅在阴线显示高点
+    df = update_peak_or_trough(df, 'Peak_Prediction', 'Trough_Prediction', 
+                               lambda df, i, date: df.loc[date, 'Close'] < df.loc[df.index[i-1], 'Close'])
 
-    bt_result = backtest_results(data_preprocessed, signal_df, initial_capital=1_000_000)
-    print("回测结果：", bt_result)
-    return data_preprocessed, bt_result
+    # 低点处理：仅在阳线显示低点
+    df = update_peak_or_trough(df, 'Trough_Prediction', 'Peak_Prediction', 
+                               lambda df, i, date: df.loc[date, 'Close'] > df.loc[df.index[i-1], 'Close'])
+
+    return df
+
+
+
 
 
 def adjust_probabilities_in_range(df, start_date, end_date):
@@ -174,7 +293,7 @@ def adjust_probabilities_in_range(df, start_date, end_date):
 def get_trade_signal(data_preprocessed):
     # 复制数据以避免修改原始 DataFrame
     data_preprocessed = data_preprocessed.copy()
-    
+
     # 筛选出存在高点或低点预测的行
     signal_df = data_preprocessed[(data_preprocessed['Peak_Prediction'] == 1) | 
                                   (data_preprocessed['Trough_Prediction'] == 1)]
@@ -188,8 +307,60 @@ def get_trade_signal(data_preprocessed):
     # 仅返回交易方向这一列
     signal_df = signal_df[['direction']]
     
+
     return signal_df
 
+'''
+def get_trade_signal(data_preprocessed):
+    # 复制数据并重置索引（确保按行号顺序遍历）
+    df = data_preprocessed.copy().reset_index(drop=True)
+    # 初始化交易信号列
+    df['direction'] = ''
+    n = len(df)
+    
+    # 1. 处理高点预测（sell信号），确保仅在阴线上触发
+    for i in range(n):
+        if df.loc[i, 'Peak_Prediction'] == 1:
+            # 当天为阴线，直接标记sell
+            if df.loc[i, 'Close'] < df.loc[i, 'Open']:
+                df.loc[i, 'direction'] = 'sell'
+            else:
+                # 向后查找第一个阴线
+                for j in range(i+1, n):
+                    if df.loc[j, 'Close'] < df.loc[j, 'Open']:
+                        df.loc[j, 'direction'] = 'sell'
+                        break
 
+    # 2. 处理低点预测（buy信号），确保仅在阳线上触发
+    for i in range(n):
+        if df.loc[i, 'Trough_Prediction'] == 1:
+            # 当天为阳线，直接标记buy
+            if df.loc[i, 'Close'] > df.loc[i, 'Open']:
+                df.loc[i, 'direction'] = 'buy'
+            else:
+                # 向后查找第一个阳线
+                for j in range(i+1, n):
+                    if df.loc[j, 'Close'] > df.loc[j, 'Open']:
+                        df.loc[j, 'direction'] = 'buy'
+                        break
+
+    # 3. 对于每个buy信号，检查接下来的5天
+    for i in range(n):
+        if df.loc[i, 'direction'] == 'buy':
+            buy_close = df.loc[i, 'Close']
+            sell_found = False
+            # 在接下来的5天内检查是否已有sell信号
+            for j in range(i+1, min(i+6, n)):
+                if df.loc[j, 'direction'] == 'sell':
+                    sell_found = True
+                    break
+            # 若5天内未出现sell信号，并且第5天的收盘价低于买入日，则在第5天输出sell信号
+            if not sell_found and i+5 < n:
+                if df.loc[i+5, 'Close'] < buy_close:
+                    df.loc[i+5, 'direction'] = 'sell'
+                    
+    # 返回仅包含交易信号的列
+    return df[['direction']]
+'''
     
 
