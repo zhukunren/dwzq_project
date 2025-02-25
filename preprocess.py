@@ -242,7 +242,7 @@ def preprocess_data(
 
     # ★ 将 generate_features 里新增的列也并入 base_features
     #   这样后面方差过滤 & 相关性过滤也会考虑它们
-    base_features = list(set(base_features).union(new_cols))
+    #base_features = list(set(base_features).union(new_cols))
 
     print(f"初始 base_features 数量: {len(base_features)}")
 
