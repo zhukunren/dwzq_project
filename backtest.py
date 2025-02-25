@@ -122,11 +122,11 @@ def build_trades_from_signals(df, signal_df):
             except Exception as e:
                 print("处理buy信号报错：", e)
               
-            #卖出4天后如果出现新高再买回
+            #卖出15天后如果出现新高再买回
             try:
                 if len(trades) > 0 and exit_date is not None:  # 修正语法错误
                     days_since_exit = (df.index.get_loc(today) - df.index.get_loc(exit_date))  # 使用today计算天数
-                    if days_since_exit >= 4 and df.loc[today, 'close'] / signal_sell_high>1:  # 使用today的收盘价
+                    if days_since_exit >= 15 and df.loc[today, 'close'] / signal_sell_high>1:  # 使用today的收盘价
                         holding = True
                         entry_date = next_day
                         entry_price = df.loc[next_day, 'open']
@@ -161,8 +161,8 @@ def build_trades_from_signals(df, signal_df):
                     entry_date = None
                     entry_price = None
                     holding_days = 0
-                # 如果持仓天数超过4天且收盘价低于买入信号的收盘价，自动卖出
-                elif holding_days >= 4 and df.loc[today, 'close'] / signal_buy_low<1:  # 使用today的收盘价
+                # 如果持仓天数超过15天且收盘价低于买入信号的收盘价，自动卖出
+                elif holding_days >= 15 and df.loc[today, 'close'] / signal_buy_low<1:  # 使用today的收盘价
                     holding = False
                     exit_date = next_day
                     exit_price = df.loc[exit_date, 'open']
@@ -279,8 +279,8 @@ def build_trades_from_signals(df, signal_df):
                 entry_price = None
                 holding_days = 0  # 重置持仓天数
 
-            elif holding_days >= 4 and df.loc[next_day, 'close'] < signal_buy_close:
-                # 持仓超过4天且低于买入点，第二天卖出
+            elif holding_days >= 15 and df.loc[next_day, 'close'] < signal_buy_close:
+                # 持仓超过15天且低于买入点，第二天卖出
                 holding = False
                 exit_date = next_day
                 exit_price = df.loc[exit_date, 'open']
@@ -301,16 +301,16 @@ def build_trades_from_signals(df, signal_df):
                 entry_date = None
                 entry_price = None
 
-            # 卖出后超过4天且收盘价高于卖出价，第二天买入
+            # 卖出后超过15天且收盘价高于卖出价，第二天买入
             if not holding and trades and trades[-1]['exit_date'] is not None:
                 days_since_exit = (df.index.get_loc(next_day) - df.index.get_loc(exit_date))
-                if days_since_exit >= 4 and df.loc[next_day, 'close'] > exit_price:
+                if days_since_exit >= 15 and df.loc[next_day, 'close'] > exit_price:
                     print("上次卖出日期：", exit_date)
                     holding = True
                     entry_date = next_day
                     entry_price = df.loc[entry_date, 'open']
                     holding_days = 0
-                    print(f"卖出后超过 4 天，收盘价高于卖出价，买入！ 交易日期：{next_day.strftime('%Y-%m-%d')}")
+                    print(f"卖出后超过 15 天，收盘价高于卖出价，买入！ 交易日期：{next_day.strftime('%Y-%m-%d')}")
 
     # 在for循环结束后，检查是否还在持仓
     if holding:
@@ -388,7 +388,7 @@ def backtest_results(df, signal_df, initial_capital=1_000_000):
     
     返回
     -------
-    result: dict，包含 4 个字段，
+    result: dict，包含 15 个字段，
       '同期标的涨跌幅'、
       '"波段盈"累计收益率'、
       '超额收益率'、
