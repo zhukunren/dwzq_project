@@ -53,12 +53,14 @@ def merge_trades(data_preprocessed, trades_df):
 def predict_new_data(new_df,
                      peak_model, peak_scaler, peak_selector, all_features_peak, peak_threshold,
                      trough_model, trough_scaler, trough_selector, all_features_trough, trough_threshold,
-                     N, mixture_depth=3, window_size=10, eval_mode=False):
+                     N, mixture_depth=3, window_size=10, eval_mode=False, 
+                     N_buy=None, N_sell=None, #追涨，止损窗口
+                     enable_chase=True, enable_stop_loss=True,#是否启用止损、追涨
+                     enable_change_signal=False,#调整买卖信号
+                     N_newhigh=60):#创X日新高
     print("开始预测新数据...")
     try:
         data_preprocessed, _ = preprocess_data(new_df, N, mixture_depth=mixture_depth, mark_labels=eval_mode)
-        #print(f"预处理后数据长度: {len(data_preprocessed)}")
-        
         # ========== Peak 预测 ==========
         print("\n开始Peak预测...")
         missing_features_peak = [f for f in all_features_peak if f not in data_preprocessed.columns]
@@ -109,6 +111,7 @@ def predict_new_data(new_df,
         peak_preds = (peak_probas > peak_threshold).astype(int)
         data_preprocessed['Peak_Probability'] = peak_probas
         data_preprocessed['Peak_Prediction'] = peak_preds
+
         # ========== Trough 预测 ==========
         print("\n开始Trough预测...")
         missing_features_trough = [f for f in all_features_trough if f not in data_preprocessed.columns]
@@ -172,74 +175,69 @@ def predict_new_data(new_df,
                 start = idx + 1
                 end = min(idx + 20, len(data_preprocessed))
                 data_preprocessed.iloc[start:end, data_preprocessed.columns.get_loc('Trough_Prediction')] = 0
-                data_preprocessed = change_troug_and_peak(data_preprocessed)
+        # 调用更正函数（注意函数名称修改为 change_trough_and_peak）
+        if enable_change_signal :
+            data_preprocessed = change_troug_and_peak(data_preprocessed,N_newhigh)
+
         # 回测：生成交易信号并计算回测结果
         signal_df = get_trade_signal(data_preprocessed)
-        #print('交易信号：',signal_df)
-
-        bt_result, trades_df = backtest_results(data_preprocessed, signal_df, initial_capital=1_000_000)
-        print(trades_df)
-        print("合并前索引：",data_preprocessed.index)
-        # 将 'TradeDate' 列转换为 datetime 类型
-        data_preprocessed['date'] = pd.to_datetime(data_preprocessed['TradeDate'], errors='coerce')
-
-        print("合并前data_preprocessed列：", data_preprocessed.columns)
+        bt_result, trades_df = backtest_results(data_preprocessed, 
+                                                signal_df,
+                                                  N_buy, #追涨窗口
+                                                  N_sell,#止损窗口
+                                                  enable_chase,#是否启用追涨
+                                                  enable_stop_loss,#是否启用止损
+                                                  initial_capital=1_000_000)
+        # 将 'TradeDate' 列转换为 datetime 类型，如不存在则用索引转换
+        if 'TradeDate' in data_preprocessed.columns:
+            data_preprocessed['date'] = pd.to_datetime(data_preprocessed['TradeDate'], errors='coerce')
+        else:
+            data_preprocessed['date'] = pd.to_datetime(data_preprocessed.index, errors='coerce')
 
         data_preprocessed['trade'] = None
         # 合并卖出日期，确保 exit_date 对齐到 data_preprocessed['date']
         data_preprocessed = pd.merge(
             data_preprocessed, 
-            trades_df[['exit_date']],  # 选择 trades_df 中的 'exit_date'
-            left_on='date',                        # 使用 data_preprocessed 中的 'date' 列进行合并
-            right_on='exit_date',                  # 使用 trades_df 中的 'exit_date' 列进行合并
-            how='left'                             # 使用左连接，保留 data_preprocessed 中所有行
+            trades_df[['exit_date']],  
+            left_on='date',                        
+            right_on='exit_date',                  
+            how='left'
         )
-
-        # 设置 trade 为 'sell' 当 exit_date 非空时
         data_preprocessed['trade'] = np.where(data_preprocessed['exit_date'].notna(), 'sell', data_preprocessed['trade'])
-
-        # 合并 entry_date
+        # 合并买入日期
         data_preprocessed = pd.merge(
             data_preprocessed, 
-            trades_df[['entry_date']],  # 选择 trades_df 中的 'entry_date'
-            left_on='date',                           # 使用 data_preprocessed 中的 'date' 列进行合并
-            right_on='entry_date',                    # 使用 trades_df 中的 'entry_date' 列进行合并
-            how='left'                                # 使用左连接，保留 data_preprocessed 中所有行
+            trades_df[['entry_date']],  
+            left_on='date',                           
+            right_on='entry_date',                    
+            how='left'
         )
-
-        # 设置 trade 为 'buy' 当 entry_date 非空时
         data_preprocessed['trade'] = np.where(data_preprocessed['entry_date'].notna(), 'buy', data_preprocessed['trade'])
-        #删除重复日期
+        # 删除重复日期
         data_preprocessed = data_preprocessed.drop_duplicates(subset=['date'])
-
-        print("合并后data_preprocessed列：", data_preprocessed.columns)
-        
-        # 输出合并后的结果检查
-        # 打印 'TradeDate', 'date', 'trade' 列中 'trade' 不为空的行
-        print(data_preprocessed[['TradeDate', 'date', 'trade']].dropna(subset=['trade']))
-
-        print("回测结果：", bt_result)
         data_preprocessed.set_index('date', inplace=True)
-        print("合并后索引：",data_preprocessed.index)
     except Exception as e:
-        print('predict_new_data函数出错',e)
-    return data_preprocessed, bt_result,trades_df
+        print('predict_new_data函数出错:', e)
+        if 'trades_df' in locals():
+            print("回测结果：", trades_df)
+        else:
+            print("未生成交易结果")
+        raise e
+    return data_preprocessed, bt_result, trades_df
 
 
-def change_troug_and_peak(df):
+#W出现于阴线，D出现于阳线，且盘中要创60日新高
+def change_troug_and_peak(df,N_newhigh):
     
     def update_peak_or_trough(df, prediction_col, opposite_col, condition):
         for i, date in enumerate(df.index):
-            #print(f"处理日期 {date}: {prediction_col}={df.loc[date, prediction_col]}, {opposite_col}={df.loc[date, opposite_col]}, Close={df.loc[date, 'Close']}, Open={df.loc[date, 'Open']}")
-            
-            # 只处理1的预测值
+            # 只处理预测值为1的情况
             if df.loc[date, prediction_col] == 1:
-                # 判断收盘价是否符合条件
                 if condition(df, i, date):
                     df.loc[date, prediction_col] = 1  # 保持当前预测
                 else:
                     df.loc[date, prediction_col] = 0  # 移除预测
-                    # 寻找下一个符合条件的值
+                    # 寻找下一个符合条件的日期，将预测信号转移过去
                     for j in range(i + 1, len(df)):
                         next_date = df.index[j]
                         if condition(df, j, next_date):
@@ -247,13 +245,25 @@ def change_troug_and_peak(df):
                             break
         return df
 
-    # 高点处理：仅在阴线显示高点
-    df = update_peak_or_trough(df, 'Peak_Prediction', 'Trough_Prediction', 
-                               lambda df, i, date: df.loc[date, 'Close'] < df.loc[df.index[i-1], 'Close'])
+    # 高点处理：仅在阴线出现卖出信号，且当天 High 创过去60日 Close 新高
+    df = update_peak_or_trough(
+        df, 
+        'Peak_Prediction', 
+        'Trough_Prediction', 
+        lambda df, i, date: (
+            i >= N_newhigh and 
+            df.loc[date, 'High'] > df.loc[df.index[i-N_newhigh:i], 'Close'].max() and 
+            df.loc[date, 'Close'] < df.loc[date, 'Open']
+        )
+    )
 
-    # 低点处理：仅在阳线显示低点
-    df = update_peak_or_trough(df, 'Trough_Prediction', 'Peak_Prediction', 
-                               lambda df, i, date: df.loc[date, 'Close'] > df.loc[df.index[i-1], 'Close'])
+    # 低点处理：仅在阳线显示低点信号
+    df = update_peak_or_trough(
+        df, 
+        'Trough_Prediction', 
+        'Peak_Prediction', 
+        lambda df, i, date: df.loc[date, 'Close'] > df.loc[date, 'Open']
+    )
 
     return df
 
@@ -309,58 +319,3 @@ def get_trade_signal(data_preprocessed):
     
 
     return signal_df
-
-'''
-def get_trade_signal(data_preprocessed):
-    # 复制数据并重置索引（确保按行号顺序遍历）
-    df = data_preprocessed.copy().reset_index(drop=True)
-    # 初始化交易信号列
-    df['direction'] = ''
-    n = len(df)
-    
-    # 1. 处理高点预测（sell信号），确保仅在阴线上触发
-    for i in range(n):
-        if df.loc[i, 'Peak_Prediction'] == 1:
-            # 当天为阴线，直接标记sell
-            if df.loc[i, 'Close'] < df.loc[i, 'Open']:
-                df.loc[i, 'direction'] = 'sell'
-            else:
-                # 向后查找第一个阴线
-                for j in range(i+1, n):
-                    if df.loc[j, 'Close'] < df.loc[j, 'Open']:
-                        df.loc[j, 'direction'] = 'sell'
-                        break
-
-    # 2. 处理低点预测（buy信号），确保仅在阳线上触发
-    for i in range(n):
-        if df.loc[i, 'Trough_Prediction'] == 1:
-            # 当天为阳线，直接标记buy
-            if df.loc[i, 'Close'] > df.loc[i, 'Open']:
-                df.loc[i, 'direction'] = 'buy'
-            else:
-                # 向后查找第一个阳线
-                for j in range(i+1, n):
-                    if df.loc[j, 'Close'] > df.loc[j, 'Open']:
-                        df.loc[j, 'direction'] = 'buy'
-                        break
-
-    # 3. 对于每个buy信号，检查接下来的5天
-    for i in range(n):
-        if df.loc[i, 'direction'] == 'buy':
-            buy_close = df.loc[i, 'Close']
-            sell_found = False
-            # 在接下来的5天内检查是否已有sell信号
-            for j in range(i+1, min(i+6, n)):
-                if df.loc[j, 'direction'] == 'sell':
-                    sell_found = True
-                    break
-            # 若5天内未出现sell信号，并且第5天的收盘价低于买入日，则在第5天输出sell信号
-            if not sell_found and i+5 < n:
-                if df.loc[i+5, 'Close'] < buy_close:
-                    df.loc[i+5, 'direction'] = 'sell'
-                    
-    # 返回仅包含交易信号的列
-    return df[['direction']]
-'''
-    
-
