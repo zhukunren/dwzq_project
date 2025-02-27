@@ -252,7 +252,7 @@ def change_troug_and_peak(df,N_newhigh):
         'Trough_Prediction', 
         lambda df, i, date: (
             i >= N_newhigh and 
-                df.loc[date, 'Close'] > df.loc[df.index[i-N_newhigh:i], 'Close'].max() and 
+            df.loc[date, 'High'] > df.loc[df.index[i-N_newhigh:i], 'Close'].max() and 
             df.loc[date, 'Close'] < df.loc[date, 'Open']
         )
     )
