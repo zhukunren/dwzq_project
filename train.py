@@ -11,9 +11,12 @@ from joblib import Parallel, delayed, parallel_backend
 
 from preprocess import create_pos_neg_sequences_by_consecutive_labels
 from models import get_transformer_classifier, get_mlp_classifier
-import streamlit as st
+#import streamlit as st
 
-@st.cache_data
+def identity_transform(x):
+    return x
+
+#@st.cache_data
 def optimize_threshold(y_true, y_proba, metric='precision'):
     """
     根据给定评估指标（'precision', 'f1', 'recall', 'accuracy', 'mcc'）在 [0,1] 区间内寻找最佳分类阈值。
@@ -47,7 +50,7 @@ def optimize_threshold(y_true, y_proba, metric='precision'):
             best_thresh = thresh
     return best_thresh
 
-def train_model_for_label(df, N, label_column, all_features, classifier_name, n_features_selected, window_size=10, oversample_method='SMOTE', class_weight=None):
+def train_model_for_label(df, N, label_column, all_features, classifier_name, n_features_selected, window_size=30, oversample_method='SMOTE', class_weight=None):
     print(f"开始训练 {label_column} 模型...")
     data = df.copy()
     X = data[all_features]
@@ -71,7 +74,7 @@ def train_model_for_label(df, N, label_column, all_features, classifier_name, n_
         print("使用时间顺序强化采样构造时序数据...")
         X_features, y_features = create_pos_neg_sequences_by_consecutive_labels(X_scaled, y, negative_ratio=1.0, adjacent_steps=5)
         X_train, X_test, y_train, y_test = train_test_split(X_features, y_features, test_size=0.2, random_state=42, stratify=y_features)
-        print(f"训练集大小: {X_train.shape}, 测试集大小: {X_test.shape}")
+        #print(f"训练集大小: {X_train.shape}, 测试集大小: {X_test.shape}")
     else:  # 对于 MLP 模型
         if oversample_method == 'SMOTE':
             sampler = SMOTE(random_state=42)
@@ -89,12 +92,12 @@ def train_model_for_label(df, N, label_column, all_features, classifier_name, n_
             raise ValueError(f"未知的过采样方法: {oversample_method}")
         if sampler is not None:
             X_resampled, y_resampled = sampler.fit_resample(X_scaled, y)
-            print(f"数据形状: X={X_resampled.shape}, y={y_resampled.shape}")
+            #print(f"数据形状: X={X_resampled.shape}, y={y_resampled.shape}")
         else:
             print("不进行过采样，使用原始数据。")
             X_resampled, y_resampled = X_scaled, y
         X_train, X_test, y_train, y_test = train_test_split(X_resampled, y_resampled, test_size=0.2, random_state=42, stratify=y_resampled)
-        print(f"训练集大小: {X_train.shape}, 测试集大小: {X_test.shape}")
+        #print(f"训练集大小: {X_train.shape}, 测试集大小: {X_test.shape}")
     
     num_features = X_train.shape[-1]
     if classifier_name == 'Transformer':
@@ -115,7 +118,7 @@ def train_model_for_label(df, N, label_column, all_features, classifier_name, n_
     elif clf_name == 'mlp':
         param_grid = {
             'lr': [1e-3],
-            'max_epochs': [10]
+            'max_epochs': [30]
         }
     
     grid_search = GridSearchCV(
@@ -137,7 +140,7 @@ def train_model_for_label(df, N, label_column, all_features, classifier_name, n_
         raise
     
     print("不进行特征选择，使用全部特征")
-    feature_selector = FunctionTransformer(func=lambda x: x, validate=False)
+    feature_selector = FunctionTransformer(func=identity_transform, validate=False)
     selected_features = all_features_filtered.copy()
     
     if isinstance(best_estimator, type(clf)):
@@ -180,11 +183,11 @@ def train_model_for_label(df, N, label_column, all_features, classifier_name, n_
     }
     return (best_estimator, scaler, feature_selector, selected_features, all_features_filtered, grid_search.best_score_, metrics, best_thresh)
 
-@st.cache_resource
-def train_model(df_preprocessed, N, all_features, classifier_name, mixture_depth, n_features_selected, oversample_method, window_size=10):
+#@st.cache_resource
+def train_model(df_preprocessed, N, all_features, classifier_name, mixture_depth, n_features_selected, oversample_method, window_size=30):
     print("开始训练模型...")
     data = df_preprocessed.copy()
-    print(f"预处理后数据长度: {len(data)}")
+    #print(f"预处理后数据长度: {len(data)}")
     labels = ['Peak', 'Trough']
     with parallel_backend('threading', n_jobs=-1):
         results = Parallel()(
