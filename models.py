@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from skorch import NeuralNetClassifier
 from sklearn.utils.class_weight import compute_class_weight
 import numpy as np
+#import streamlit as st
 
 def set_seed(seed=42):
     import random, os
@@ -174,7 +175,7 @@ def get_mlp_classifier(input_dim, class_weights=None):
     return ('mlp', net)
 
 # 仅支持 Transformer 与 MLP，其他模型不再提供
-def get_classifier(classifier_name, num_features=None, window_size=10, class_weight=None):
+def get_classifier(classifier_name, num_features=None, window_size=300, class_weight=None):
     if classifier_name == 'Transformer':
         if num_features is None:
             raise ValueError("num_features必须为Transformer模型指定")
