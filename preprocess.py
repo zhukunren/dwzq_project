@@ -16,7 +16,8 @@ from sklearn.ensemble import RandomForestClassifier
 # compute_SMA, compute_PercentageB, compute_AccumulationDistribution, compute_HighLow_Spread, compute_PriceChannel, compute_RenkoSlope
 from function import *
 from feature_expanded import generate_features
-import streamlit as st
+#import streamlit as st
+
 # 封装相关性过滤函数
 def correlation_filtering(data, features, threshold=0.95):
     """
@@ -328,6 +329,7 @@ def preprocess_data(
     print(f"最终特征数量：{len(all_features)}")
 
     # ------------------ 10) 检查关键列 ------------------
+
     required_cols = [
         'Close_MA5_Diff', 'MA5_MA20_Diff', 'RSI_Signal', 'MACD_Diff',
         'Bollinger_Position', 'K_D_Diff'
@@ -341,12 +343,12 @@ def preprocess_data(
     initial_length = len(data)
     data = data.dropna().copy()
     final_length = len(data)
-    print(f"数据预处理前长度: {initial_length}, 数据预处理后长度: {final_length}")
-
+    #print(f"数据预处理前长度: {initial_length}, 数据预处理后长度: {final_length}")
+  
     return data, all_features
 
 #时间序列强化采样
-@st.cache_data
+#@st.cache_data
 def create_pos_neg_sequences_by_consecutive_labels(X, y, negative_ratio=1.0, adjacent_steps=5):
     pos_idx = np.where(y == 1)[0]
     pos_segments = []
