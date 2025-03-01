@@ -559,7 +559,7 @@ def main_product():
                     cols_1 = st.columns(3)
                     for col, (name, value) in zip(cols_1, first_line):
                         if isinstance(value, float):
-                            col.metric(name, f"{value*100:.2f}%")
+                            col.metric(name, f"{value*100:.2f}%")  # <-- 所有 float 都做了 *100 并加上 %
                         else:
                             col.metric(name, f"{value}")
 
