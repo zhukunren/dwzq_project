@@ -794,11 +794,12 @@ def main_product():
                     second_line = metrics[3:]
                     cols_2 = st.columns(3)
                     for col, (name, value) in zip(cols_2, second_line):
+                        '''
                         if isinstance(value, float):
                             col.metric(name, f"{value*100:.2f}%")
                         else:
                             col.metric(name, f"{value}")
-
+                        '''
                     # K线图：标注预测的峰/谷
                     peaks_pred = final_result[final_result['Peak_Prediction'] == 1]
                     troughs_pred = final_result[final_result['Trough_Prediction'] == 1]
