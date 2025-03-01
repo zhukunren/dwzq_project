@@ -53,7 +53,7 @@ def merge_trades(data_preprocessed, trades_df):
 def predict_new_data(new_df,
                      peak_model, peak_scaler, peak_selector, all_features_peak, peak_threshold,
                      trough_model, trough_scaler, trough_selector, all_features_trough, trough_threshold,
-                     N, mixture_depth=3, window_size=10, eval_mode=False, 
+                     N, mixture_depth=3, window_size=300, eval_mode=False, 
                      N_buy=None, N_sell=None, #追涨，止损窗口
                      enable_chase=True, enable_stop_loss=True,#是否启用止损、追涨
                      enable_change_signal=False,#调整买卖信号
