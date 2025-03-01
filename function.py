@@ -18,6 +18,7 @@ def compute_RSI(series, period=14):
     - period: 计算周期
     返回:
     - RSI值序列
+    
     """
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).fillna(0)
@@ -544,6 +545,110 @@ def compute_RenkoSlope(close, bricks=3):
     # 对renko序列进行累积或平滑处理，作为趋势力度指标
     return renko.rolling(window=5, min_periods=1).sum()
 
+def compute_MACD_histogram(macd, signal):
+    """
+    MACD Histogram
+    用于显示MACD与其信号线之间的差异。
+    """
+    return macd - signal
+
+def compute_ema_crossover(series, short_period=12, long_period=26):
+    """
+    计算EMA交叉
+    """
+    short_ema = series.ewm(span=short_period, adjust=False).mean()
+    long_ema = series.ewm(span=long_period, adjust=False).mean()
+    crossover = short_ema > long_ema
+    return crossover
+
+def compute_average_gain_loss(series, period=14):
+    """
+    计算平均涨幅和跌幅
+    """
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).fillna(0)
+    loss = (-delta.where(delta < 0, 0)).fillna(0)
+    avg_gain = gain.rolling(window=period).mean()
+    avg_loss = loss.rolling(window=period).mean()
+    return avg_gain, avg_loss
+
+def compute_mfm(high, low, close):
+    """
+    计算资金流动乘数（MFM）
+    """
+    return ((close - low) - (high - close)) / (high - low)
+
+def compute_RVI(series, period=14):
+    """
+    计算相对波动率指数（RVI）
+    """
+    log_returns = np.log(series / series.shift(1))
+    rolling_mean = log_returns.rolling(window=period).mean()
+    rolling_std = log_returns.rolling(window=period).std()
+    rvi = rolling_mean / rolling_std
+    return rvi
+
+def compute_force_index(close, volume, period=1):
+    """
+    计算强势指数（Force Index）
+    """
+    force = close.diff(period) * volume
+    return force
+
+def compute_parabolic_sar(high, low, close, acceleration=0.02, maximum=0.2):
+    """
+    计算抛物线SAR
+    """
+    sar = close.copy()
+    ep = high.max()
+    af = acceleration
+    for i in range(1, len(sar)):
+        sar.iloc[i] = sar.iloc[i-1] + af * (ep - sar.iloc[i-1])
+        if close.iloc[i] > sar.iloc[i]:
+            ep = high.iloc[i]
+            af = min(af + acceleration, maximum)
+        else:
+            ep = low.iloc[i]
+            af = min(af + acceleration, maximum)
+    return sar
+
+def compute_DMI(high, low, close, period=14):
+    """
+    计算方向性运动指数（DMI）
+    """
+    up_move = high.diff()
+    down_move = low.diff()
+    plus_dm = ((up_move > down_move) & (up_move > 0)) * up_move
+    minus_dm = ((down_move > up_move) & (down_move > 0)) * (-down_move)
+    tr = high - low
+    tr_sum = tr.rolling(window=period).sum()
+
+    plus_di = 100 * (plus_dm.rolling(window=period).sum() / tr_sum)
+    minus_di = 100 * (minus_dm.rolling(window=period).sum() / tr_sum)
+    return plus_di, minus_di
+
+def compute_smoothed_RSI(series, period=14):
+    """
+    计算平滑RSI
+    """
+    avg_gain, avg_loss = compute_average_gain_loss(series, period)
+    rs = avg_gain / avg_loss
+    smoothed_rsi = 100 - (100 / (1 + rs))
+    return smoothed_rsi
+
+def compute_std(series, period=20):
+    """
+    计算标准差
+    """
+    return series.rolling(window=period).std()
+
+def compute_ema_trend(series, period=14):
+    """
+    计算基于EMA的趋势
+    """
+    ema = series.ewm(span=period, adjust=False).mean()
+    trend = series - ema
+    return trend
 
 # ---------- 高低点识别函数 ----------
 
