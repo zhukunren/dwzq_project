@@ -18,6 +18,8 @@ from train import train_model
 from predict import predict_new_data
 from plotly.subplots import make_subplots
 import plotly.graph_objs as go
+
+import itertools
 # 设置随机种子
 set_seed(42)
 
@@ -260,9 +262,12 @@ class TrainWorker(QThread):
         except Exception as e:
             self.error.emit(str(e))
 
+from itertools import product
+
 class PredictWorker(QThread):
     prediction_finished = pyqtSignal(str, pd.DataFrame)
     error = pyqtSignal(str)
+    
     def __init__(self, file_path, stock_code, train_start_date, train_end_date, start_new_date, end_new_date, N,
                  classifier_name, mixture_depth, n_features_selected, oversample_method):
         super().__init__()
@@ -277,47 +282,85 @@ class PredictWorker(QThread):
         self.mixture_depth = mixture_depth
         self.n_features_selected = n_features_selected
         self.oversample_method = oversample_method
+        
     def run(self):
         try:
             stock_code_tdx = self.stock_code[-2:].lower() + self.stock_code[:6]
             best_excess_return = -np.inf
             best_models = None
-            # 重新训练10次
-            for i in range(30):
+            peak_models = []
+            trough_models = []
+
+            # 重新训练10次，分别保存高点和低点模型
+            for i in range(10):
                 print(f"重新训练第 {i+1} 次...")
+
+                # 读取训练数据
                 train_data = read_day_fromtdx(self.file_path, stock_code_tdx)
                 training_df = select_time(train_data, self.train_start_date, self.train_end_date)
                 if training_df.empty:
                     raise ValueError("训练集为空，请检查训练日期范围和数据文件")
+
+                # 数据预处理
                 df_preprocessed_train, all_features = preprocess_data(training_df, self.N, mixture_depth=self.mixture_depth, mark_labels=True)
+                
+                # 训练模型
                 result_tuple = train_model(df_preprocessed_train, self.N, all_features, self.classifier_name,
-                                           self.mixture_depth, self.n_features_selected, self.oversample_method, window_size=10)
+                                           self.mixture_depth, self.n_features_selected, self.oversample_method, window_size=30)
                 (peak_model, peak_scaler, peak_selector, peak_selected_features, all_features_peak, peak_best_score,
                  peak_metrics, peak_threshold,
                  trough_model, trough_scaler, trough_selector, trough_selected_features, all_features_trough,
                  trough_best_score, trough_metrics, trough_threshold) = result_tuple
+
+                # 将高点和低点模型分别保存
+                peak_models.append((peak_model, peak_scaler, peak_selector, peak_selected_features, all_features_peak, peak_threshold))
+                trough_models.append((trough_model, trough_scaler, trough_selector, trough_selected_features, all_features_trough, trough_threshold))
+
+            print("开始生成模型笛卡尔积...")
+
+            # 生成笛卡尔积，得到 100 种模型组合
+            model_combinations = list(product(peak_models, trough_models))
+
+            best_excess_return = -np.inf
+            best_combination = None
+
+            # 回测每个组合并选择超额收益率最高的
+            for peak_model, trough_model in model_combinations:
+                peak_model_data = peak_model
+                trough_model_data = trough_model
+
+                # 使用当前模型组合进行回测
                 pred_data = read_day_fromtdx(self.file_path, stock_code_tdx)
                 new_df = select_time(pred_data, self.start_new_date, self.end_new_date)
                 if new_df.empty:
                     raise ValueError("预测集为空，请检查预测日期范围和数据文件")
-                result_eval, eval_bt = predict_new_data(new_df, peak_model, peak_scaler, peak_selector, all_features_peak, peak_threshold,
-                                               trough_model, trough_scaler, trough_selector, all_features_trough, trough_threshold,
-                                               self.N, self.mixture_depth, window_size=10, eval_mode=True)
-                # 这里采用回测结果中的超额收益率进行比较
+
+                # 执行回测
+                result_eval, eval_bt = predict_new_data(new_df, peak_model_data[0], peak_model_data[1], peak_model_data[2], peak_model_data[4], peak_model_data[5],
+                                                       trough_model_data[0], trough_model_data[1], trough_model_data[2], trough_model_data[4], trough_model_data[5],
+                                                       self.N, self.mixture_depth, window_size=30, eval_mode=True)
+
+                # 比较超额收益率
                 excess_return = eval_bt.get('超额收益率', -np.inf)
-                print(f"第 {i+1} 次训练: 超额收益率: {excess_return:.4f}")
+                print(f"模型组合超额收益率: {excess_return:.4f}")
+
                 if excess_return > best_excess_return:
                     best_excess_return = excess_return
-                    best_models = (peak_model, peak_scaler, peak_selector, peak_selected_features, all_features_peak, peak_threshold,
-                                    trough_model, trough_scaler, trough_selector, trough_selected_features, all_features_trough, trough_threshold)
+                    best_combination = (peak_model_data, trough_model_data)
+
             print(f"最佳超额收益率: {best_excess_return:.4f}")
-            if best_models is None:
-                raise ValueError("未能训练出有效模型")
-            (best_peak_model, best_peak_scaler, best_peak_selector, best_peak_selected_features, best_all_features_peak, best_peak_threshold,
-             best_trough_model, best_trough_scaler, best_trough_selector, best_trough_selected_features, best_all_features_trough, best_trough_threshold) = best_models
-            final_result, final_bt_result = predict_new_data(new_df, best_peak_model, best_peak_scaler, best_peak_selector, best_all_features_peak, best_peak_threshold,
-                                            best_trough_model, best_trough_scaler, best_trough_selector, best_all_features_trough, best_trough_threshold,
-                                            self.N, self.mixture_depth, window_size=10, eval_mode=False)
+
+            if best_combination is None:
+                raise ValueError("未能找到最佳模型组合")
+
+            # 获取最佳模型组合
+            best_peak_model_data, best_trough_model_data = best_combination
+
+            # 使用最佳组合进行最终预测
+            final_result, final_bt_result = predict_new_data(new_df, best_peak_model_data[0], best_peak_model_data[1], best_peak_model_data[2], best_peak_model_data[4], best_peak_model_data[5],
+                                            best_trough_model_data[0], best_trough_model_data[1], best_trough_model_data[2], best_trough_model_data[4], best_trough_model_data[5],
+                                            self.N, self.mixture_depth, window_size=30, eval_mode=False)
+
             plot_worker = PlotWorker(
                 final_result, self.stock_code, self.start_new_date, self.end_new_date,
                 title="预测结果K线图",
@@ -333,6 +376,8 @@ class PredictWorker(QThread):
             self.prediction_finished.emit(fig_html, final_result)
         except Exception as e:
             self.error.emit(str(e))
+
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
