@@ -225,6 +225,25 @@ def preprocess_data(
     data['Bollinger_Position'] = data['Bollinger_Position'].fillna(0)
     data['K_D_Diff'] = data['K'] - data['D']
 
+    # ------------- 新增扩展指标（新增的指标函数调用） -------------
+    data['MACD_Hist'] = compute_MACD_histogram(data['Close'])
+    ichimoku = compute_ichimoku(data['High'], data['Low'], data['Close'])
+    data['Ichimoku_Tenkan'] = ichimoku['tenkan_sen']
+    data['Ichimoku_Kijun'] = ichimoku['kijun_sen']
+    data['Ichimoku_SpanA'] = ichimoku['senkou_span_a']
+    data['Ichimoku_SpanB'] = ichimoku['senkou_span_b']
+    data['Ichimoku_Chikou'] = ichimoku['chikou_span']
+    data['Coppock'] = compute_coppock_curve(data['Close'])
+    data['Chaikin_Vol'] = compute_chaikin_volatility(data['High'], data['Low'], period=10, ma_period=10)
+    if 'Volume' in data.columns:
+        data['EOM'] = compute_ease_of_movement(data['High'], data['Low'], data['Volume'], period=14)
+    else:
+        data['EOM'] = np.nan
+    data['Vortex_Pos'], data['Vortex_Neg'] = compute_vortex_indicator(data['High'], data['Low'], data['Close'], period=14)
+    data['Annualized_Vol'] = compute_annualized_volatility(data['Close'], period=10, trading_days=252)
+    data['Fisher'] = compute_fisher_transform(data['Close'], period=10)
+    data['CMO_14'] = compute_CMO(data['Close'], period=14)
+
     # ------------------ 6) 构建基础因子 base_features 列表 ------------------
     print("构建基础因子列表 base_features...")
     base_features = [
@@ -238,16 +257,22 @@ def preprocess_data(
         'MFI_14','CMF_20','TRIX_15','Ultimate_Osc','Chaikin_Osc','PPO',
         'DPO_20','KST','KST_signal','KAMA_10'
     ]
+    base_features.extend([
+        'MACD_Hist', 'Ichimoku_Tenkan', 'Ichimoku_Kijun', 'Ichimoku_SpanA',
+        'Ichimoku_SpanB', 'Ichimoku_Chikou', 'Coppock', 'Chaikin_Vol', 'EOM',
+        'Vortex_Pos', 'Annualized_Vol', 'Fisher', 'CMO_14'
+    ])
     if 'Volume' in data.columns:
         base_features.append('Volume')
 
     # ★ 将 generate_features 里新增的列也并入 base_features
     #   这样后面方差过滤 & 相关性过滤也会考虑它们
-    base_features = list(set(base_features).union(new_cols))
+    #base_features = list(set(base_features).union(new_cols))
 
     print(f"初始 base_features 数量: {len(base_features)}")
 
     # ------------------ 7) 方差过滤 ------------------
+
     print("对基础特征进行方差过滤...")
     X_base = data[base_features].fillna(0)
     selector = VarianceThreshold(threshold=0.0001)
@@ -263,7 +288,7 @@ def preprocess_data(
     to_drop = [column for column in upper.columns if any(upper[column] > 0.95)]
     base_features = [f for f in base_features if f not in to_drop]
     print(f"相关性过滤后剩余特征数：{len(base_features)}")
-
+  
     # ------------------ 9) 若 mixture_depth > 1, 生成混合因子 ------------------
     print(f"生成混合因子, mixture_depth = {mixture_depth}")
     if mixture_depth > 1:
@@ -341,7 +366,7 @@ def preprocess_data(
     # ------------------ 11) 删除缺失值 & 返回 ------------------
     print("删除缺失值...")
     initial_length = len(data)
-    data = data.dropna().copy()
+    #data = data.dropna().copy()
     final_length = len(data)
     #print(f"数据预处理前长度: {initial_length}, 数据预处理后长度: {final_length}")
   
