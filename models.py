@@ -20,7 +20,7 @@ def set_seed(seed=42):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     torch.use_deterministic_algorithms(True)
-
+    
 # 自定义损失函数
 class WeightedBCEWithLogitsLoss(nn.Module):
     def __init__(self, pos_weight):
@@ -165,7 +165,7 @@ def get_mlp_classifier(input_dim, class_weights=None):
         module__dropout=0.5,
         criterion=loss,
         optimizer=torch.optim.Adam,
-        max_epochs=50,
+        max_epochs=100,
         lr=1e-3,
         batch_size=64,
         train_split=None,
@@ -175,7 +175,7 @@ def get_mlp_classifier(input_dim, class_weights=None):
     return ('mlp', net)
 
 # 仅支持 Transformer 与 MLP，其他模型不再提供
-def get_classifier(classifier_name, num_features=None, window_size=300, class_weight=None):
+def get_classifier(classifier_name, num_features=None, window_size=10, class_weight=None):
     if classifier_name == 'Transformer':
         if num_features is None:
             raise ValueError("num_features必须为Transformer模型指定")
