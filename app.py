@@ -131,7 +131,7 @@ def main_product():
 
         # 多轮训练次数
         #num_rounds = st.number_input("多轮训练次数", min_value=1, max_value=50, value=10)
-        num_rounds =2
+        num_rounds =10
         # 点击开始训练
         if st.button("开始训练"):
             try:
